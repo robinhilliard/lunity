@@ -1,6 +1,6 @@
 # Lunity
 
-Game engine and editor utilities for EAGL. Provides debug drawing, config loading, and (in later phases) prefabs, ECSx integration, and MCP tooling.
+Game engine and editor utilities for EAGL. Provides debug drawing, config loading, prefabs, and (in later phases) ECSx integration and MCP tooling.
 
 ## Installation
 
@@ -29,6 +29,23 @@ Code-behind config files (Phase 3). Load `.exs` configs from `priv/config/` and 
 ```elixir
 {:ok, config} = Lunity.ConfigLoader.load_config("scenes/doors/level1_door")
 merged = Lunity.ConfigLoader.merge_config(config, node.properties)
+```
+
+### Lunity.PrefabLoader
+
+Load and instantiate prefabs (reusable glTF + config templates). Prefabs live at `priv/prefabs/<id>.glb` with config at `priv/config/prefabs/<id>.exs`. Uses PBR shader by default; override via `opts[:shader_program]`. Requires an active OpenGL context.
+
+```elixir
+# Load prefab (requires GL context)
+{:ok, scene, config} = Lunity.PrefabLoader.load_prefab("crate")
+
+# Instantiate and attach to parent
+{:ok, parent, merged_config} =
+  Lunity.PrefabLoader.instantiate_prefab("crate", parent_node, %{health: 50})
+
+# From pre-loaded (e.g. for caching)
+{:ok, parent, merged} =
+  Lunity.PrefabLoader.instantiate_prefab_from_loaded(scene, config, parent_node, %{})
 ```
 
 ## Concepts
