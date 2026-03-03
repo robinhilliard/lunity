@@ -5,10 +5,10 @@ defmodule Lunity.Extras do
   ## Blender workflow (Phase 2.3)
 
   - **Flat property naming**: One Blender custom property = one config variable.
-  - glTF extras use flat keys: `extras["behaviour"]`, `extras["config"]`, `extras["open_angle"]`.
+  - glTF extras use flat keys; in EAGL they become `node.properties["behaviour"]`, `node.properties["config"]`, etc.
   - Blender: Object Properties > Custom Properties (e.g. `behaviour`, `config`, `open_angle`).
   - Export: File > Export > glTF 2.0, enable **Include > Custom Properties**.
-  - These become flat keys in `node.extras` in the glTF JSON.
+  - glTF extras are passed through as `node.properties` in EAGL.Node.
 
   ## Validation
 
