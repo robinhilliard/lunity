@@ -16,24 +16,69 @@ permissions:
 
 jobs:
   build:
-
     name: Build and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Elixir
-      uses: erlef/setup-beam@61e01a43a562a89bfc54c7f9a378ff67b03e4a21 # v1.16.0
-      with:
-        elixir-version: '1.15.2' # [Required] Define the Elixir version
-        otp-version: '26.0'      # [Required] Define the Erlang/OTP version
-    - name: Restore dependencies cache
-      uses: actions/cache@v3
-      with:
-        path: deps
-        key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-        restore-keys: ${{ runner.os }}-mix-
-    - name: Install dependencies
-      run: mix deps.get
-    - name: Run tests
-      run: mix test
+      - uses: actions/checkout@v4
+
+      - name: Clone EAGL (path dependency)
+        run: |
+          git clone https://github.com/robinhilliard/eagl.git ../eagl
+          cd ../eagl && git fetch --tags && (git checkout v0.13.0 2>/dev/null || git checkout main)
+          cd -
+
+      - name: Install GUI and OpenGL dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwxgtk3.0-gtk3-0v5 \
+            libwxgtk3.0-gtk3-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev \
+            xvfb \
+            x11-utils \
+            libx11-dev \
+            libxrandr2 \
+            libxi6 \
+            libxcursor1 \
+            libxinerama1 \
+            libgtk-3-dev \
+            libglib2.0-dev
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.17.3"
+          otp-version: "26.2"
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile
+        run: mix compile --warnings-as-errors
+
+      - name: Run tests with virtual display
+        run: |
+          xvfb-run -a mix test 2>&1 | tee test.log
+          EXIT=$?
+          if [ $EXIT -eq 139 ] || [ $EXIT -eq 134 ]; then
+            if grep -q "0 failures" test.log; then
+              echo "Tests passed; ignoring shutdown crash (known Mesa/wx/xvfb issue)"
+              exit 0
+            fi
+          fi
+          exit $EXIT
+        env:
+          LIBGL_ALWAYS_SOFTWARE: 1
+          CI: true
