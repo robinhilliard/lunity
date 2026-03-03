@@ -24,9 +24,7 @@ jobs:
 
       - name: Clone EAGL (path dependency)
         run: |
-          git clone https://github.com/robinhilliard/eagl.git ../eagl
-          cd ../eagl && git fetch --tags && (git checkout v0.13.0 2>/dev/null || git checkout main)
-          cd -
+          git clone --depth 1 --branch main https://github.com/robinhilliard/eagl.git ../eagl
 
       - name: Install GUI and OpenGL dependencies
         run: |
