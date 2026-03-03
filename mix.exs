@@ -21,7 +21,8 @@ defmodule Lunity.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:eagl, "~> 0.13", path: "../eagl"}
+      {:eagl, "~> 0.13", path: "../eagl"},
+      {:stb_image, "~> 0.6"}
     ]
   end
 end
