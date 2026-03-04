@@ -32,16 +32,20 @@ defmodule Mix.Tasks.Lunity.Mcp do
     # Ensure we're in a Mix project
     Mix.Project.get!()
 
-    # Start the MCP server with stdio transport
-    # Log to stderr so stdout stays clean for JSON-RPC
+    # Editor mode: start the Lunity app (opens wx window with orbit view)
+    Application.put_env(:lunity, :mode, :editor)
     Application.put_env(:logger, :backends, [])
     Logger.configure(level: :warning)
+
+    {:ok, _} = Application.ensure_all_started(:lunity)
+
+    # Give the editor window time to open and establish GL context
+    Process.sleep(500)
 
     opts = [transport: :stdio]
 
     case Lunity.MCP.Server.start_link(opts) do
       {:ok, _pid} ->
-        # Block until the process exits
         Process.sleep(:infinity)
 
       {:error, reason} ->

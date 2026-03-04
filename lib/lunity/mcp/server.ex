@@ -11,6 +11,10 @@ defmodule Lunity.MCP.Server do
   """
   use ExMCP.Server
 
+  alias Lunity.Editor.State
+  alias Lunity.MCP.BlenderExtras
+  alias Lunity.MCP.Hierarchy
+
   deftool "project_structure" do
     meta do
       name "Project Structure"
@@ -20,6 +24,54 @@ defmodule Lunity.MCP.Server do
     input_schema %{
       type: "object",
       properties: %{}
+    }
+  end
+
+  deftool "scene_load" do
+    meta do
+      name "Scene Load"
+      description "Load a scene from priv/scenes/<path>.glb into the editor. Path is project-relative (e.g. 'box' or 'scenes/warehouse'). Requires editor with GL context."
+    end
+
+    input_schema %{
+      type: "object",
+      properties: %{
+        path: %{
+          type: "string",
+          description: "Scene path relative to priv/scenes/ (e.g. 'box', 'warehouse')"
+        }
+      },
+      required: ["path"]
+    }
+  end
+
+  deftool "scene_get_hierarchy" do
+    meta do
+      name "Scene Get Hierarchy"
+      description "Returns the scene graph hierarchy of the currently loaded scene. Nodes include name, properties (extras), and children. Returns error if no scene loaded."
+    end
+
+    input_schema %{
+      type: "object",
+      properties: %{}
+    }
+  end
+
+  deftool "get_blender_extras_script" do
+    meta do
+      name "Get Blender Extras Script"
+      description "Returns a Python script to add Blender custom properties from a behaviour's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
+    end
+
+    input_schema %{
+      type: "object",
+      properties: %{
+        behaviour: %{
+          type: "string",
+          description: "Behaviour module name (e.g. 'MyGame.Behaviours.Door')"
+        }
+      },
+      required: ["behaviour"]
     }
   end
 
@@ -41,5 +93,74 @@ defmodule Lunity.MCP.Server do
     """
 
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+  end
+
+  def handle_tool_call("scene_load", %{"path" => path}, state) when is_binary(path) do
+    State.put_load_command(path)
+
+    # Poll for result (editor processes on next frame, ~16ms at 60fps)
+    result = poll_load_result(60, 50)
+
+    {content, is_error} =
+      case result do
+        {:ok, loaded_path, entity_count} ->
+          {"Loaded scene #{loaded_path} (#{entity_count} entities).", false}
+
+        {:error, reason} ->
+          {"Failed to load scene: #{inspect(reason)}", true}
+
+        nil ->
+          {"Scene load timed out. The editor may not be running or the path may be invalid.", true}
+      end
+
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
+  end
+
+  def handle_tool_call("scene_load", _args, state) do
+    content = "scene_load requires a 'path' argument (e.g. {\"path\": \"box\"})."
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
+  def handle_tool_call("scene_get_hierarchy", _args, state) do
+    case State.get_scene() do
+      nil ->
+        content = "No scene loaded. Use scene_load first."
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+
+      scene ->
+        hierarchy = Hierarchy.from_scene(scene)
+        json = Jason.encode!(hierarchy)
+        {:ok, %{content: [%{type: "text", text: json}], is_error?: false}, state}
+    end
+  end
+
+  def handle_tool_call("get_blender_extras_script", %{"behaviour" => behaviour}, state)
+      when is_binary(behaviour) do
+    case BlenderExtras.generate_script(behaviour) do
+      {:ok, script} ->
+        {:ok, %{content: [%{type: "text", text: script}], is_error?: false}, state}
+
+      {:error, reason} ->
+        content = "Failed to generate script: #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+    end
+  end
+
+  def handle_tool_call("get_blender_extras_script", _args, state) do
+    content = "get_blender_extras_script requires a 'behaviour' argument (e.g. {\"behaviour\": \"MyGame.Behaviours.Door\"})."
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
+  defp poll_load_result(0, _interval), do: nil
+
+  defp poll_load_result(attempts, interval) do
+    case State.take_load_result() do
+      nil ->
+        Process.sleep(interval)
+        poll_load_result(attempts - 1, interval)
+
+      result ->
+        result
+    end
   end
 end
