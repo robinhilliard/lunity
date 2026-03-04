@@ -19,7 +19,8 @@ defmodule Lunity.Application do
     init_project_context_from_mix()
 
     children = [
-      {Task, fn -> Lunity.Editor.View.run() end}
+      {Task, fn -> Lunity.Editor.View.run() end},
+      Lunity.Editor.FileWatcher
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)

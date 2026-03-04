@@ -9,7 +9,7 @@ defmodule Lunity.ConfigLoader do
 
   ## Convention
 
-  - `node.properties["behaviour"]` = module name (e.g. `"MyGame.Behaviours.Door"`)
+  - `node.properties["entity"]` = module name (e.g. `"MyGame.Door"`)
   - `node.properties["config"]` = path relative to `priv/config/` (e.g. `"scenes/doors/level1_door"`)
   - Matching file: `priv/config/scenes/doors/level1_door.exs` returns a keyword list or map
 

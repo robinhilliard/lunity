@@ -1,14 +1,12 @@
-defmodule Lunity.TestBehaviour do
-  @moduledoc "Test behaviour for get_blender_extras_script tests."
-  use Lunity.NodeBehaviour
+defmodule Lunity.TestEntity do
+  @moduledoc "Test entity for get_blender_extras_script tests."
+  use Lunity.Entity, config: "test/config"
 
-  behaviour_properties(
-    behaviour: [type: :string, default: "Lunity.TestBehaviour"],
-    config: [type: :string, default: "test/config"],
-    open_angle: [type: :float, default: 90, min: 0, max: 360],
-    health: [type: :integer, default: 100, min: 0]
-  )
+  entity do
+    property :open_angle, :float, default: 90, min: 0, max: 360
+    property :health, :integer, default: 100, min: 0
+  end
 
-  @impl Lunity.NodeBehaviour
+  @impl Lunity.Entity
   def init(_config, _entity_id), do: :ok
 end

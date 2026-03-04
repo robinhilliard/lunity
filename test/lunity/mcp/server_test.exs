@@ -35,43 +35,42 @@ defmodule Lunity.MCP.ServerTest do
   end
 
   describe "get_blender_extras_script tool" do
-    test "returns Python script for known behaviour" do
+    test "returns Python script for known entity" do
       {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
 
       assert {:ok, %{content: [%{type: "text", text: script}], is_error?: false}, _} =
                Lunity.MCP.Server.handle_tool_call(
                  "get_blender_extras_script",
-                 %{"behaviour" => "Lunity.TestBehaviour"},
+                 %{"entity" => "Lunity.TestEntity"},
                  nil
                )
 
       assert script =~ "import bpy"
       assert script =~ "add_property"
-      assert script =~ "behaviour"
       assert script =~ "open_angle"
       assert script =~ "health"
     end
 
-    test "returns error for unknown behaviour" do
+    test "returns error for unknown entity" do
       {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
 
       assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
                Lunity.MCP.Server.handle_tool_call(
                  "get_blender_extras_script",
-                 %{"behaviour" => "NonExistent.Behaviour"},
+                 %{"entity" => "NonExistent.Entity"},
                  nil
                )
 
       assert text =~ "Failed to generate script"
     end
 
-    test "returns error when behaviour argument missing" do
+    test "returns error when entity argument missing" do
       {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
 
       assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
                Lunity.MCP.Server.handle_tool_call("get_blender_extras_script", %{}, nil)
 
-      assert text =~ "behaviour"
+      assert text =~ "entity"
     end
   end
 

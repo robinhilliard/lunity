@@ -96,19 +96,19 @@ defmodule Lunity.MCP.Server do
       name("Get Blender Extras Script")
 
       description(
-        "Returns a Python script to add Blender custom properties from a behaviour's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
+        "Returns a Python script to add Blender custom properties from an entity's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
       )
     end
 
     input_schema(%{
       type: "object",
       properties: %{
-        behaviour: %{
+        entity: %{
           type: "string",
-          description: "Behaviour module name (e.g. 'MyGame.Behaviours.Door')"
+          description: "Entity module name (e.g. 'MyGame.Door')"
         }
       },
-      required: ["behaviour"]
+      required: ["entity"]
     })
   end
 
@@ -530,9 +530,9 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  defp do_handle_tool_call("get_blender_extras_script", %{"behaviour" => behaviour}, state)
-      when is_binary(behaviour) do
-    case BlenderExtras.generate_script(behaviour) do
+  defp do_handle_tool_call("get_blender_extras_script", %{"entity" => entity}, state)
+      when is_binary(entity) do
+    case BlenderExtras.generate_script(entity) do
       {:ok, script} ->
         {:ok, %{content: [%{type: "text", text: script}], is_error?: false}, state}
 
@@ -544,7 +544,7 @@ defmodule Lunity.MCP.Server do
 
   defp do_handle_tool_call("get_blender_extras_script", _args, state) do
     content =
-      "get_blender_extras_script requires a 'behaviour' argument (e.g. {\"behaviour\": \"MyGame.Behaviours.Door\"})."
+      "get_blender_extras_script requires an 'entity' argument (e.g. {\"entity\": \"MyGame.Door\"})."
 
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end

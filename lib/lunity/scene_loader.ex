@@ -1,23 +1,23 @@
 defmodule Lunity.SceneLoader do
   @moduledoc """
-  Orchestrates scene loading: glTF, ConfigLoader, PrefabLoader, and behaviour init.
+  Orchestrates scene loading: glTF, ConfigLoader, PrefabLoader, and entity init.
 
   Single entry point for loading scenes with ECSx entity creation. Traverses
-  nodes, resolves prefabs and behaviours, creates entities, and runs init.
+  nodes, resolves prefabs and entities, creates entities, and runs init.
 
   ## Prefab load order
 
   For nodes with `extras["prefab"]`:
   1. Instantiate prefab (merge placeholder extras as overrides)
   2. Replace placeholder with prefab root at placeholder's transform
-  3. Run behaviour on prefab root with merged config
+  3. Run entity init on prefab root with merged config
 
-  ## Behaviour nodes
+  ## Entity nodes
 
-  For nodes with `extras["behaviour"]`:
+  For nodes with `extras["entity"]`:
   1. Create entity (generate ID)
   2. Load config from `extras["config"]`, merge with extras
-  3. Call `behaviour.init(merged_config, entity_id)`
+  3. Call `entity_module.init(merged_config, entity_id)`
   4. Store entity_id in `node.properties["entity_id"]`
 
   ## Requirements
@@ -27,14 +27,18 @@ defmodule Lunity.SceneLoader do
   """
 
   alias EAGL.{Node, Scene}
-  alias Lunity.{ConfigLoader, PrefabLoader, NodeBehaviour}
+  alias Lunity.{ConfigLoader, PrefabLoader, Entity}
+  alias Lunity.Scene.{Def, NodeDef}
+
+  import EAGL.Math
 
   @doc """
-  Load a scene from `priv/scenes/<path>.glb`.
+  Load a scene by path.
 
-  Loads glTF, traverses nodes, resolves prefabs and behaviours, creates
-  entities, and runs init. Returns the scene and a list of {node, entity_id}
-  for node-linked entities.
+  Resolution order:
+  1. Scene builders (explicit `{Module, :function}` in `:lunity, :scene_builders` config)
+  2. Config file at `priv/config/scenes/<path>.exs` returning `%Lunity.Scene.Def{}`
+  3. `.glb` file at `priv/scenes/<path>.glb`
 
   ## Options
 
@@ -49,7 +53,6 @@ defmodule Lunity.SceneLoader do
   @spec load_scene(String.t(), keyword()) ::
           {:ok, Scene.t(), [{Node.t(), term()}]} | {:error, term()}
   def load_scene(path, opts \\ []) do
-    # Temporarily set project context from opts so priv_dir etc. use it
     if cwd = opts[:project_cwd] do
       Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
     end
@@ -63,7 +66,13 @@ defmodule Lunity.SceneLoader do
           err
 
         nil ->
-          load_scene_from_file(path, opts)
+          case resolve_config_scene(path, opts) do
+            {:ok, _scene, _entities} = result ->
+              result
+
+            nil ->
+              load_scene_from_file(path, opts)
+          end
       end
     end
   end
@@ -142,6 +151,174 @@ defmodule Lunity.SceneLoader do
 
       _ ->
         nil
+    end
+  end
+
+  defp resolve_config_scene(path, opts) do
+    config_key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
+    config_path = "scenes/#{config_key}"
+    config_opts = Keyword.take(opts, [:app])
+
+    case ConfigLoader.load_config(config_path, config_opts) do
+      {:ok, %Def{} = scene_def} ->
+        build_from_def(scene_def, opts)
+
+      {:ok, _other} ->
+        nil
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  defp build_from_def(%Def{nodes: node_defs}, opts) do
+    root = Node.new(name: "scene_root")
+
+    {root, entities} =
+      Enum.reduce(node_defs, {root, []}, fn node_def, {parent, entities} ->
+        {:ok, updated_parent, new_entities} = build_node_from_def(node_def, parent, opts)
+        {updated_parent, entities ++ new_entities}
+      end)
+
+    scene = Scene.new(name: "scene") |> Scene.add_root_node(root)
+    {:ok, scene, entities}
+  end
+
+  defp build_node_from_def(%NodeDef{} = node_def, parent, opts) do
+    {parent, child_node, entities} =
+      if node_def.prefab do
+        case PrefabLoader.load_prefab(node_def.prefab, opts) do
+          {:ok, prefab_scene, prefab_config} ->
+            overrides = node_def.extras || %{}
+
+            {:ok, updated_parent, _merged} =
+              PrefabLoader.instantiate_prefab_from_loaded(
+                prefab_scene,
+                prefab_config,
+                parent,
+                overrides
+              )
+
+            [child | rest] = updated_parent.children
+
+            child =
+              child
+              |> apply_transform(node_def)
+              |> Map.put(:name, to_string(node_def.name))
+
+            {child, entity_entities} =
+              if node_def.entity do
+                merged_config = ConfigLoader.merge_config(prefab_config, overrides)
+
+                case init_entity_from_def(node_def, merged_config) do
+                  {:ok, entity_id} ->
+                    {put_entity_id(child, entity_id), [{child, entity_id}]}
+
+                  {:error, _} ->
+                    {child, []}
+                end
+              else
+                {child, []}
+              end
+
+            final_parent = Node.set_children(updated_parent, [child | rest])
+            {final_parent, child, entity_entities}
+
+          {:error, reason} ->
+            raise "Failed to load prefab #{node_def.prefab}: #{inspect(reason)}"
+        end
+      else
+        child = Node.new(name: to_string(node_def.name)) |> apply_transform(node_def)
+
+        {child, entity_entities} =
+          if node_def.entity do
+            config = node_def.extras || %{}
+
+            case init_entity_from_def(node_def, config) do
+              {:ok, entity_id} ->
+                {put_entity_id(child, entity_id), [{child, entity_id}]}
+
+              {:error, _} ->
+                {child, []}
+            end
+          else
+            {child, []}
+          end
+
+        updated_parent = Node.add_child(parent, child)
+        {updated_parent, child, entity_entities}
+      end
+
+    child_entities =
+      Enum.flat_map(node_def.children || [], fn child_def ->
+        {:ok, _updated_child, child_ents} = build_node_from_def(child_def, child_node, opts)
+        child_ents
+      end)
+
+    {:ok, parent, entities ++ child_entities}
+  end
+
+  defp init_entity_from_def(%NodeDef{entity: entity_module}, merged_config)
+       when is_atom(entity_module) and entity_module != nil do
+    config_path = Entity.config_path(entity_module)
+
+    full_config =
+      if config_path do
+        case ConfigLoader.load_config(config_path) do
+          {:ok, base_config} ->
+            ConfigLoader.merge_config(
+              if(is_list(base_config), do: Map.new(base_config), else: base_config),
+              merged_config
+            )
+
+          {:error, _} ->
+            merged_config
+        end
+      else
+        merged_config
+      end
+
+    entity_id = generate_entity_id()
+
+    struct_config =
+      if function_exported?(entity_module, :__extras_spec__, 0) do
+        Entity.from_config(entity_module, if(is_list(full_config), do: Map.new(full_config), else: full_config))
+      else
+        full_config
+      end
+
+    case entity_module.init(struct_config, entity_id) do
+      :ok -> {:ok, entity_id}
+      {:error, _} = err -> err
+    end
+  rescue
+    e -> {:error, {:entity_init_error, Exception.message(e)}}
+  end
+
+  defp init_entity_from_def(_, _), do: {:error, :no_entity}
+
+  defp apply_transform(node, %NodeDef{} = def) do
+    node =
+      if def.position do
+        {x, y, z} = def.position
+        Node.set_position(node, vec3(x, y, z))
+      else
+        node
+      end
+
+    node =
+      if def.scale do
+        {x, y, z} = def.scale
+        Node.set_scale(node, vec3(x, y, z))
+      else
+        node
+      end
+
+    if def.rotation do
+      {x, y, z, w} = def.rotation
+      Node.set_rotation(node, quat(x, y, z, w))
+    else
+      node
     end
   end
 
@@ -224,8 +401,8 @@ defmodule Lunity.SceneLoader do
       prefab_id = properties["prefab"] ->
         handle_prefab_node(node, parent, prefab_id, acc)
 
-      behaviour_name = properties["behaviour"] ->
-        handle_behaviour_node(node, behaviour_name, acc)
+      entity_name = properties["entity"] ->
+        handle_entity_node(node, entity_name, acc)
 
       true ->
         # No prefab or behaviour - just process children
@@ -272,12 +449,11 @@ defmodule Lunity.SceneLoader do
 
       prefab_root = %{prefab_root | children: updated_children}
 
-      # Run behaviour on prefab root if it has one
       prefab_props = prefab_root.properties || %{}
 
       {prefab_root, acc} =
-        if prefab_props["behaviour"] do
-          case run_behaviour_init(prefab_root, prefab_props, merged_config) do
+        if prefab_props["entity"] do
+          case run_entity_init(prefab_root, prefab_props, merged_config) do
             {:ok, entity_id} ->
               prefab_root = put_entity_id(prefab_root, entity_id)
               {prefab_root, [{prefab_root, entity_id} | acc]}
@@ -297,8 +473,8 @@ defmodule Lunity.SceneLoader do
     end
   end
 
-  defp handle_behaviour_node(node, _behaviour_name, acc) do
-    case run_behaviour_init(node, node.properties || %{}, nil) do
+  defp handle_entity_node(node, _entity_name, acc) do
+    case run_entity_init(node, node.properties || %{}, nil) do
       {:ok, entity_id} ->
         node_with_id = put_entity_id(node, entity_id)
         {processed_node, acc} = process_children(node_with_id, [{node_with_id, entity_id} | acc])
@@ -309,8 +485,8 @@ defmodule Lunity.SceneLoader do
     end
   end
 
-  defp run_behaviour_init(_node, properties, prefab_merged_config) do
-    behaviour_name = properties["behaviour"]
+  defp run_entity_init(_node, properties, prefab_merged_config) do
+    entity_name = properties["entity"]
     config_path = properties["config"]
 
     merged_config =
@@ -323,19 +499,19 @@ defmodule Lunity.SceneLoader do
         end
       end
 
-    with {:ok, behaviour_module} <- resolve_behaviour(behaviour_name),
+    with {:ok, entity_module} <- resolve_entity(entity_name),
          entity_id <- generate_entity_id(),
-         :ok <- behaviour_module.init(merged_config, entity_id) do
+         :ok <- entity_module.init(merged_config, entity_id) do
       {:ok, entity_id}
     end
   end
 
-  defp resolve_behaviour(name) when is_binary(name) do
+  defp resolve_entity(name) when is_binary(name) do
     try do
-      module = NodeBehaviour.resolve_module(name)
+      module = Entity.resolve_module(name)
       if function_exported?(module, :init, 2), do: {:ok, module}, else: {:error, :no_init}
     rescue
-      _ -> {:error, {:behaviour_not_found, name}}
+      _ -> {:error, {:entity_not_found, name}}
     end
   end
 

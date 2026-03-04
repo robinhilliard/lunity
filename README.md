@@ -1,6 +1,6 @@
 # Lunity
 
-Game engine and editor utilities for EAGL. Provides debug drawing, config loading, prefabs, ECSx integration (SceneLoader, EntityFactory, NodeBehaviour), and MCP tooling for agent-driven development.
+Game engine and editor utilities for EAGL. Provides debug drawing, config loading, prefabs, ECSx integration (SceneLoader, Entity, EntityFactory), scene and entity DSLs, file watching for auto-reload, and MCP tooling for agent-driven development.
 
 ## Project structure
 
@@ -11,17 +11,103 @@ priv/
   prefabs/
     *.glb           # glTF only; config in config/prefabs/
   scenes/
-    *.glb           # glTF only; config in config/scenes/
-  config/           # Code-behind configs
-    scenes/
+    *.glb           # glTF scenes (Blender-authored)
+  config/           # Code-behind configs (.exs)
+    scenes/         # Config-driven scene definitions
     prefabs/
 ```
 
 Paths resolve via `Application.app_dir(app, "priv")` where `app` is your application. Loaders use convention-based resolution; directory walking is sufficient for typical project sizes.
 
+## Scene DSL
+
+Config-driven scenes are defined in `.exs` files using the scene DSL. These are first-class scene sources — drop a file at `priv/config/scenes/<name>.exs` and `SceneLoader.load_scene("<name>")` finds it automatically.
+
+```elixir
+# priv/config/scenes/pong.exs
+import Lunity.Scene.DSL
+
+scene do
+  node :floor,        prefab: "box", position: {0, 0, -1}, scale: {12, 6, 0.3}
+  node :paddle_left,  prefab: "box", entity: Pong.Paddle,
+                      position: {-18, 0, 0.5}, scale: {0.3, 1.5, 0.3},
+                      extras: %{side: :left}
+  node :paddle_right, prefab: "box", entity: Pong.Paddle,
+                      position: {18, 0, 0.5}, scale: {0.3, 1.5, 0.3},
+                      extras: %{side: :right}
+  node :ball,         prefab: "box", entity: Pong.Ball,
+                      position: {0, 0, 0.5}, scale: {0.4, 0.4, 0.4}
+end
+```
+
+### Node options
+
+- `:prefab` - Prefab ID to load (e.g. `"box"` loads `priv/prefabs/box.glb`)
+- `:entity` - Entity module atom (e.g. `Pong.Paddle`) for ECSx integration
+- `:config` - Config path for entity defaults (relative to `priv/config/`)
+- `:extras` - Map of per-instance overrides (merged with config; extras win)
+- `:position` - `{x, y, z}` tuple or `[x, y, z]` list
+- `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
+- `:rotation` - `{x, y, z, w}` quaternion
+
+### Scene resolution order
+
+When `SceneLoader.load_scene("pong")` is called:
+
+1. **Scene builders** - Explicit `{Module, :function}` in `:lunity, :scene_builders` config (escape hatch for custom logic)
+2. **Config file** - `priv/config/scenes/pong.exs` returning `%Lunity.Scene.Def{}`
+3. **glTF file** - `priv/scenes/pong.glb`
+
+## Entity DSL
+
+Entity types define what an ECSx entity is made of: its properties (inputs) and components (outputs). Use `use Lunity.Entity` in a module:
+
+```elixir
+defmodule Pong.Paddle do
+  use Lunity.Entity
+
+  entity do
+    property :speed, :float, default: 5.0, min: 0
+    property :side,  :atom,  values: [:left, :right]
+
+    component Pong.Components.Velocity
+    component Pong.Components.PaddleInput
+  end
+
+  @impl Lunity.Entity
+  def init(config, entity_id) do
+    ECSx.add(entity_id, Pong.Components.Velocity, %{vx: 0, vy: 0})
+    ECSx.add(entity_id, Pong.Components.PaddleInput, %{side: config.side, speed: config.speed})
+    :ok
+  end
+end
+```
+
+### Property types
+
+- `:string` - Binary string
+- `:integer` - Integer with optional `min:`, `max:` constraints
+- `:float` - Number with optional `min:`, `max:` constraints
+- `:atom` - Atom with optional `values: [...]` constraint
+- `:boolean` - Boolean
+- `:module` - Module atom (verified loaded at validation time)
+
+### Entity vs prefab vs config vs extras
+
+- **Prefab** (`prefab: "box"`) - The visual representation. A `.glb` mesh file. Multiple entity types can share the same prefab.
+- **Entity** (`entity: Pong.Paddle`) - The entity type. Defines which ECSx components to add and how to initialise them. This is where game logic lives.
+- **Config** (`config: "paddles/fast"`) - Game design defaults from a `.exs` file. Base values that can be varied without changing code (wooden door, steel door, boss door).
+- **Extras** (`extras: %{side: :left}`) - Per-instance overrides in the scene file. Merged with config at load time; extras win on conflicts.
+
+Merge order: config file (base) <- extras (overrides) -> passed to `entity.init(merged_config, entity_id)`.
+
+## File watcher (editor mode)
+
+In editor mode, Lunity watches `priv/config/`, `priv/scenes/`, and `priv/prefabs/` for file changes. When a change is detected the current scene is automatically reloaded with the camera position preserved. Changes are debounced (300ms) to handle editors that write multiple times in quick succession.
+
 ## MCP server
 
-### HTTP (default) – stdio breaks due to group leader issues
+### HTTP (default) - stdio breaks due to group leader issues
 
 Stdio forces group leader changes that break wx/GL. Use HTTP instead.
 
@@ -63,7 +149,7 @@ Debug drawing for editor overlays and visualization: `draw_line/5`, `draw_ray/5`
 
 ### Lunity.ConfigLoader
 
-Code-behind config files (Phase 3). Load `.exs` configs from `priv/config/` and merge with node properties (glTF extras):
+Code-behind config files. Load `.exs` configs from `priv/config/` and merge with node properties (glTF extras):
 
 ```elixir
 {:ok, config} = Lunity.ConfigLoader.load_config("scenes/doors/level1_door")
@@ -75,81 +161,72 @@ merged = Lunity.ConfigLoader.merge_config(config, node.properties)
 Load and instantiate prefabs (reusable glTF + config templates). Prefabs live at `priv/prefabs/<id>.glb` with config at `priv/config/prefabs/<id>.exs`. Uses PBR shader by default; override via `opts[:shader_program]`. Requires an active OpenGL context.
 
 ```elixir
-# Load prefab (requires GL context)
 {:ok, scene, config} = Lunity.PrefabLoader.load_prefab("crate")
 
-# Instantiate and attach to parent
 {:ok, parent, merged_config} =
   Lunity.PrefabLoader.instantiate_prefab("crate", parent_node, %{health: 50})
-
-# From pre-loaded (e.g. for caching)
-{:ok, parent, merged} =
-  Lunity.PrefabLoader.instantiate_prefab_from_loaded(scene, config, parent_node, %{})
 ```
 
-### Lunity.NodeBehaviour (Phase 5)
+### Lunity.Entity
 
-Behaviour for node-linked entities. Use `use Lunity.NodeBehaviour` and `behaviour_properties` to define extras schema and implement `init(config, entity_id)` to add ECSx components. Provides `extras_spec/1`, `validate_extras/2`, `from_config/2`, `resolve_module/1`.
+Entity type definition for ECSx integration. Use `use Lunity.Entity` with an `entity do...end` block to declare properties and components. See the Entity DSL section above for full documentation.
 
-### Lunity.SceneLoader (Phase 5)
+Introspection functions: `extras_spec/1`, `components/1`, `config_path/1`, `validate_extras/2`, `from_config/2`, `resolve_module/1`.
 
-Orchestrates scene loading: glTF, ConfigLoader, PrefabLoader, and behaviour init. Single entry point. Requires ECSx to be running (game adds ECSx to its supervision tree).
+### Lunity.SceneLoader
+
+Orchestrates scene loading from config-driven scenes, glTF files, or scene builders. Resolves prefabs, creates ECSx entities, and runs entity init. Requires ECSx to be running (game adds ECSx to its supervision tree).
 
 ```elixir
 {:ok, scene, entities} = Lunity.SceneLoader.load_scene("warehouse")
 ```
 
-### Lunity.EntityFactory (Phase 5)
+### Lunity.EntityFactory
 
-Create node-less entities from config. For offscreen processes, AI, inventory, spawn queues. Config returns a list of component structs; EntityFactory adds each. No registry; macros/helpers optional later.
+Create node-less entities from config. For offscreen processes, AI, inventory, spawn queues. Config returns a list of component structs; EntityFactory adds each.
 
 ```elixir
-# priv/config/spawns/enemy_type_a.exs
-alias MyGame.Components.{Movement, Health, AI}
-[%Movement{x: 0, y: 0, vx: 1, vy: 0}, %Health{value: 100}, %AI{type: :patrol}]
-
-# Usage
 {:ok, entity_id} = Lunity.EntityFactory.create_from_config("spawns/enemy_type_a", %{health: 80})
 ```
 
 ## Concepts
 
-### Behaviour vs Config
+### Entity type vs config
 
-- **Behaviour module** – The *type* definition: which ECSx components to add, property schema (types, constraints). Shared by all instances of that entity type. Don't hard-code game design defaults here.
-- **Config files** – Game design defaults: health, damage, key_id, etc. One config can back many instances. Create as many config variants as needed (wooden door, steel door, boss door) without touching the behaviour module.
-- **Decoupling** – Keeps behaviours stable (schema + logic) and configs flexible (designers add variants without code changes).
+- **Entity module** - The *type* definition: which ECSx components to add, property schema (types, constraints). Shared by all instances of that entity type. Don't hard-code game design defaults here.
+- **Config files** - Game design defaults: health, damage, key_id, etc. One config can back many instances. Create as many config variants as needed (wooden door, steel door, boss door) without touching the entity module.
+- **Decoupling** - Keeps entity types stable (schema + logic) and configs flexible (designers add variants without code changes).
 
 ### Config + extras = constructor args
 
-Config (from `.exs`) and extras (from `node.properties`) are **merged** at load time. Config is the base; extras override. The merged result is passed to `behaviour.init(config, entity_id)` as constructor arguments.
+Config (from `.exs`) and extras (from scene node or `node.properties`) are **merged** at load time. Config is the base; extras override. The merged result is passed to `entity.init(config, entity_id)` as constructor arguments.
 
-Properties are not a field inside config—they are two sources that get merged, with extras winning on conflicts. Nil values in extras are ignored (don't override config).
+Properties are not a field inside config - they are two sources that get merged, with extras winning on conflicts. Nil values in extras are ignored (don't override config).
 
 ### Entities vs Nodes
 
 ECSx entities and EAGL nodes have a flexible relationship:
 
-- **1:1 (default)** – Each node with a behaviour creates one entity. The entity stores `entity_id` on the node (or node ref in a component) for the link.
-- **1:many** – Spawner nodes create multiple entities at runtime (e.g. projectiles, offscreen enemies).
-- **0:1 (node-less entities)** – Entities can exist without any node. Use for offscreen processes, AI agents, inventory state, spawn queues, or any game logic that doesn't need a scene-graph presence. Created via `Lunity.EntityFactory.create_from_config("path", overrides)` – config returns a list of component structs; no `Lunity.NodeBehaviour` required.
+- **1:1 (default)** - Each node with an entity type creates one ECSx entity. The entity stores `entity_id` on the node for the link.
+- **1:many** - Spawner nodes create multiple entities at runtime (e.g. projectiles, offscreen enemies).
+- **0:1 (node-less entities)** - Entities can exist without any node. Use for offscreen processes, AI agents, inventory state, spawn queues, or any game logic that doesn't need a scene-graph presence. Created via `Lunity.EntityFactory.create_from_config("path", overrides)`.
 
 EAGL.Scene is for rendering; ECSx is for game logic. Node-less entities participate in systems but are not drawn.
 
 ### Config vs ECSx components
 
-- **Config/extras** – Load-time, declarative. Design parameters and initial values.
-- **ECSx components** – Runtime state. Velocity, health, position—updated by systems each frame. Config feeds into component *initialization*; components are the live state systems operate on.
+- **Config/extras** - Load-time, declarative. Design parameters and initial values.
+- **ECSx components** - Runtime state. Velocity, health, position - updated by systems each frame. Config feeds into component *initialisation*; components are the live state systems operate on.
 
 ### Init and systems
 
-The loader creates the entity via `ECSx.add_entity/1`, then calls `behaviour.init(merged_config, entity_id)`. The behaviour adds components and sets initial values.
+The loader creates the entity, then calls `entity_module.init(merged_config, entity_id)`. The entity module adds components and sets initial values.
 
 Systems read and update those components each tick. A sync system writes ECSx Transform to the EAGL scene graph for rendering.
 
 ### Programmatic spawning
 
-When spawning via `instantiate_prefab(id, parent, overrides)`, overrides merge with the prefab's config. Same semantics as extras overriding config—just the overrides come from code instead of Blender.
+When spawning via `instantiate_prefab(id, parent, overrides)`, overrides merge with the prefab's config. Same semantics as extras overriding config - just the overrides come from code instead of the scene file.
 
 ## Coordinate system
 

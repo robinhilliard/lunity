@@ -27,6 +27,7 @@ defmodule Lunity.MixProject do
       {:ex_mcp, "~> 0.7"},
       {:png, "~> 0.2"},
       {:stb_image, "~> 0.6"},
+      {:file_system, "~> 1.0"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end

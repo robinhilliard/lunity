@@ -1,21 +1,21 @@
 defmodule Lunity.MCP.BlenderExtras do
   @moduledoc """
-  Generates Python scripts for Blender custom properties from behaviour extras specs.
+  Generates Python scripts for Blender custom properties from entity extras specs.
 
   The agent passes the script to Blender MCP's `execute_blender_code` to create
-  custom properties on selected object(s) that match the behaviour's schema.
+  custom properties on selected object(s) that match the entity's schema.
   """
-  alias Lunity.NodeBehaviour
+  alias Lunity.Entity
 
   @doc """
-  Generate a Python script that creates Blender custom properties from a behaviour's extras spec.
+  Generate a Python script that creates Blender custom properties from an entity's extras spec.
 
   Returns `{:ok, script}` or `{:error, reason}`.
   """
   @spec generate_script(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def generate_script(behaviour_name) when is_binary(behaviour_name) do
-    with {:ok, module} <- resolve_module(behaviour_name),
-         spec when spec != nil <- NodeBehaviour.extras_spec(module) do
+  def generate_script(entity_name) when is_binary(entity_name) do
+    with {:ok, module} <- resolve_module(entity_name),
+         spec when spec != nil <- Entity.extras_spec(module) do
       script = build_script(spec)
       {:ok, script}
     else
@@ -26,19 +26,19 @@ defmodule Lunity.MCP.BlenderExtras do
 
   defp resolve_module(name) do
     try do
-      module = NodeBehaviour.resolve_module(name)
+      module = Entity.resolve_module(name)
 
       if function_exported?(module, :__extras_spec__, 0),
         do: {:ok, module},
-        else: {:error, :not_a_behaviour}
+        else: {:error, :not_an_entity}
     rescue
-      _ -> {:error, {:behaviour_not_found, name}}
+      _ -> {:error, {:entity_not_found, name}}
     end
   end
 
   defp build_script(spec) when is_map(spec) do
     lines = [
-      "# Add custom properties from Lunity behaviour extras spec",
+      "# Add custom properties from Lunity entity extras spec",
       "# Run on selected object(s) in Blender",
       "",
       "import bpy",
