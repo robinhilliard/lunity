@@ -23,7 +23,7 @@ Paths resolve via `Application.app_dir(app, "priv")` where `app` is your applica
 
 Run `mix lunity.mcp` to start the Lunity editor with MCP server (stdio transport for Cursor). Opens a wx window with orbit camera view; MCP tools operate on the editor state. Configure in Cursor's MCP settings with `cwd` set to your game project path.
 
-**Tools**: `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`
+**Tools**: `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`
 
 ## Installation
 

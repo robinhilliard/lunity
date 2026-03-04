@@ -85,4 +85,61 @@ defmodule Lunity.MCP.ServerTest do
       assert text =~ "path"
     end
   end
+
+  describe "editor_get_context tool" do
+    test "returns no scene message when nothing loaded" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("editor_get_context", %{}, nil)
+
+      assert text =~ "No scene"
+    end
+  end
+
+  describe "editor_push tool" do
+    test "returns error when no scene loaded" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("editor_push", %{}, nil)
+
+      assert text =~ "No scene"
+    end
+  end
+
+  describe "editor_pop tool" do
+    test "returns error when stack empty" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("editor_pop", %{}, nil)
+
+      assert text =~ "empty"
+    end
+  end
+
+  describe "editor_peek tool" do
+    test "returns empty stack" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("editor_peek", %{}, nil)
+
+      assert text =~ "count"
+      assert text =~ "0"
+    end
+  end
+
+  describe "editor_set_context tool" do
+    test "returns error when type or path missing" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("editor_set_context", %{}, nil)
+
+      assert text =~ "type"
+      assert text =~ "path"
+    end
+  end
 end
