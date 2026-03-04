@@ -49,8 +49,104 @@ defmodule Lunity.SceneLoader do
   @spec load_scene(String.t(), keyword()) ::
           {:ok, Scene.t(), [{Node.t(), term()}]} | {:error, term()}
   def load_scene(path, opts \\ []) do
-    with :ok <- validate_path(path),
-         {:ok, glb_path} <- scene_glb_path(path, opts),
+    # Temporarily set project context from opts so priv_dir etc. use it
+    if cwd = opts[:project_cwd] do
+      Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
+    end
+
+    with :ok <- validate_path(path) do
+      case resolve_scene_builder(path, opts) do
+        {:ok, scene} ->
+          {:ok, scene, []}
+
+        {:error, _reason} = err ->
+          err
+
+        nil ->
+          load_scene_from_file(path, opts)
+      end
+    end
+  end
+
+  defp resolve_scene_builder(path, opts) do
+    builders = Application.get_env(:lunity, :scene_builders, %{})
+    key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
+
+    case Map.get(builders, key) do
+      {module, function} when is_atom(module) and is_atom(function) ->
+        case Code.ensure_loaded(module) do
+          {:module, _} ->
+            shader_opts = Keyword.take(opts, [:shader_program])
+            builder_opts = [app: Keyword.get(opts, :app, current_app())] ++ shader_opts
+
+            try do
+              case apply(module, function, [builder_opts]) do
+                {:ok, scene} -> {:ok, scene}
+                {:ok, scene, _} -> {:ok, scene}
+                other -> other
+              end
+            rescue
+              e ->
+                {:error, {:scene_builder_error, Exception.message(e)}}
+            end
+
+          {:error, :nofile} ->
+            # Ensure host app is started (editor may run before project app is fully loaded)
+            app = module |> Module.split() |> List.first() |> String.downcase() |> String.to_atom()
+            _ = Application.ensure_all_started(app)
+            # Add app's ebin to code path; use opts (from load command) or ETS or project_priv
+            try do
+              ebin =
+                opts[:project_cwd] ||
+                  (case Lunity.Editor.State.get_project_context() do
+                    {cwd, _} when is_binary(cwd) -> cwd
+                    _ -> nil
+                  end)
+
+              ebin =
+                if ebin do
+                  Path.join(ebin, "_build/dev/lib/#{app}/ebin")
+                else
+                  project_priv = Application.get_env(:lunity, :project_priv)
+                  if project_priv do
+                    Path.join(Path.dirname(project_priv), "_build/dev/lib/#{app}/ebin")
+                  else
+                    Path.join(Application.app_dir(app), "ebin")
+                  end
+                end
+              ebin = Path.expand(ebin)
+              if File.dir?(ebin) do
+                # Elixir's :code.add_path uses add_path/2 with :nocache; Erlang add_path/1 works
+                apply(:code, :add_path, [String.to_charlist(ebin)])
+              end
+            rescue
+              _ -> :ok
+            end
+            case Code.ensure_loaded(module) do
+              {:module, _} ->
+                shader_opts = Keyword.take(opts, [:shader_program])
+                builder_opts = [app: Keyword.get(opts, :app, current_app())] ++ shader_opts
+                try do
+                  case apply(module, function, [builder_opts]) do
+                    {:ok, scene} -> {:ok, scene}
+                    {:ok, scene, _} -> {:ok, scene}
+                    other -> other
+                  end
+                rescue
+                  e -> {:error, {:scene_builder_error, Exception.message(e)}}
+                end
+              {:error, _} ->
+                {:error, {:scene_builder_error, "module #{inspect(module)} is not available"}}
+            end
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp load_scene_from_file(path, opts) do
+    with {:ok, glb_path} <- scene_glb_path(path, opts),
          :ok <- ensure_glb_exists(glb_path),
          {:ok, shader_program} <- shader_for_opts(opts),
          {:ok, scene, _gltf, _ds} <- GLTF.EAGL.load_scene(glb_path, shader_program, opts) do
@@ -76,7 +172,7 @@ defmodule Lunity.SceneLoader do
 
   defp scene_glb_path(path, opts) do
     app = Keyword.get(opts, :app, current_app())
-    priv_dir = Application.app_dir(app, "priv")
+    priv_dir = Lunity.priv_dir_for_app(app)
     scenes_dir = Path.join(priv_dir, "scenes")
     full_path = Path.join(scenes_dir, ensure_glb_suffix(path))
 
@@ -112,10 +208,7 @@ defmodule Lunity.SceneLoader do
   end
 
   defp current_app do
-    case Mix.Project.get() do
-      nil -> :lunity
-      project -> project.project()[:app]
-    end
+    Lunity.project_app()
   end
 
   defp process_roots(nodes, acc) do

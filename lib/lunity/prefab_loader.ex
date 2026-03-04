@@ -144,7 +144,7 @@ defmodule Lunity.PrefabLoader do
 
   defp prefab_glb_path(id, opts) do
     app = Keyword.get(opts, :app, current_app())
-    priv_dir = Application.app_dir(app, "priv")
+    priv_dir = Lunity.priv_dir_for_app(app)
     prefabs_dir = Path.join(priv_dir, "prefabs")
     path = Path.join(prefabs_dir, ensure_glb_suffix(id))
 
@@ -191,10 +191,7 @@ defmodule Lunity.PrefabLoader do
   end
 
   defp current_app do
-    case Mix.Project.get() do
-      nil -> :lunity
-      project -> project.project()[:app]
-    end
+    Lunity.project_app()
   end
 
   # Clone node structure; share mesh, camera, animations (references).

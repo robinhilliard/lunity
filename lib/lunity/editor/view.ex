@@ -35,13 +35,15 @@ defmodule Lunity.Editor.View do
 
     with {:ok, program} <- GLTF.EAGL.create_pbr_shader() do
       orbit = EAGL.OrbitCamera.new()
-      {:ok, %{program: program, orbit: orbit}}
+      {:ok, %{program: program, orbit: orbit, tried_default: false, load_retries: 0, frame: 0}}
     end
   end
 
   @impl true
   def render(w, h, state) do
+    state = %{state | frame: Map.get(state, :frame, 0) + 1}
     state = apply_orbit_command(state)
+    state = maybe_load_default_scene(state)
     state = process_load_command(state)
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
@@ -49,6 +51,30 @@ defmodule Lunity.Editor.View do
     {:ok, state} = do_render(w, h, state)
     sync_orbit_to_ets(state)
     {:ok, state}
+  end
+
+  defp maybe_load_default_scene(%{tried_default: true} = state), do: state
+
+  defp maybe_load_default_scene(%{tried_default: false} = state) do
+    # Wait a few frames for GL context to be fully ready (avoids empty scene on MCP startup)
+    if Map.get(state, :frame, 0) < 3 do
+      state
+    else
+      case State.get_scene() do
+        nil ->
+          case Application.get_env(:lunity, :default_scene) do
+            path when is_binary(path) and path != "" ->
+              State.put_load_command(path)
+              %{state | tried_default: true}
+
+            _ ->
+              %{state | tried_default: true}
+          end
+
+        _ ->
+          %{state | tried_default: true}
+      end
+    end
   end
 
   defp apply_orbit_command(%{orbit: _} = state) do
@@ -60,8 +86,11 @@ defmodule Lunity.Editor.View do
 
   defp process_load_command(%{program: program} = state) do
     case State.take_load_command() do
+      {:load_scene, path, cwd, app} ->
+        load_scene_and_apply(state, program, path, cwd, app)
+
       {:load_scene, path} ->
-        load_scene_and_apply(state, program, path)
+        load_scene_and_apply(state, program, path, nil, nil)
 
       {:load_prefab, id} ->
         load_prefab_and_apply(state, program, id)
@@ -71,18 +100,33 @@ defmodule Lunity.Editor.View do
     end
   end
 
-  defp load_scene_and_apply(state, program, path) do
-    case SceneLoader.load_scene(path, shader_program: program) do
+  defp load_scene_and_apply(state, program, path, cwd, app) do
+    opts = [shader_program: program]
+    opts = if cwd, do: Keyword.put(opts, :project_cwd, cwd) |> Keyword.put(:project_app, app), else: opts
+    case SceneLoader.load_scene(path, opts) do
       {:ok, scene, entities} ->
         State.set_scene(scene, path, entities, :scene)
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, path, length(entities)})
-        %{state | orbit: orbit}
+        %{state | orbit: orbit, tried_default: true, load_retries: 0}
+
+      {:error, {:scene_builder_error, _} = reason} ->
+        # Retry: host app (e.g. Pong.SceneBuilder) may not be loaded yet at startup
+        retries = Map.get(state, :load_retries, 0)
+        if retries < 60 do
+          State.put_load_command(path, cwd, app)
+          State.put_load_result({:error, reason})
+          %{state | load_retries: retries + 1}
+        else
+          State.clear_scene()
+          State.put_load_result({:error, reason})
+          %{state | tried_default: true, load_retries: 0}
+        end
 
       {:error, reason} ->
         State.clear_scene()
         State.put_load_result({:error, reason})
-        state
+        %{state | tried_default: true}
     end
   end
 

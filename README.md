@@ -21,9 +21,25 @@ Paths resolve via `Application.app_dir(app, "priv")` where `app` is your applica
 
 ## MCP server
 
-Run `mix lunity.mcp` to start the Lunity editor with MCP server (stdio transport for Cursor). Opens a wx window with orbit camera view; MCP tools operate on the editor state. Configure in Cursor's MCP settings with `cwd` set to your game project path.
+### HTTP (default) – stdio breaks due to group leader issues
 
-**Tools**: `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
+Stdio forces group leader changes that break wx/GL. Use HTTP instead.
+
+Run from your game project: `mix lunity.mcp`. Cursor config (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "lunity": {
+      "url": "http://localhost:4111/sse"
+    }
+  }
+}
+```
+
+Call the **set_project** tool first with `cwd` (and optional `app`) so scene_load and other tools know which game project to use. Port 4111 (override with `LUNITY_HTTP_PORT`).
+
+**Tools**: `set_project` (call first with HTTP), `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
 
 ## Installation
 

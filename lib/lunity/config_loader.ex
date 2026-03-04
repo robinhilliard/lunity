@@ -109,14 +109,11 @@ defmodule Lunity.ConfigLoader do
   # ---------------------------------------------------------------------------
 
   defp current_app do
-    case Mix.Project.get() do
-      nil -> :lunity
-      project -> project.project()[:app]
-    end
+    Lunity.project_app()
   end
 
   defp config_dir_for_app(app) do
-    Path.join(Application.app_dir(app, "priv"), "config")
+    Path.join(Lunity.priv_dir_for_app(app), "config")
   end
 
   defp ensure_exs_suffix(path) do

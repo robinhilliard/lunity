@@ -9,12 +9,36 @@ defmodule Lunity.MCP.Server do
   See the plan for full tool list. Phase 6a provides the skeleton; tools are
   implemented incrementally in subsequent phases.
   """
-  use ExMCP.Server
-
+  use Lunity.MCP.Server.Setup
   alias Lunity.Editor.State
   alias Lunity.MCP.BlenderExtras
   alias Lunity.MCP.Hierarchy
   alias Lunity.MCP.Viewport
+
+  deftool "set_project" do
+    meta do
+      name("Set Project")
+
+      description(
+        "Set the project root (cwd) and app for this session. Call this first when using HTTP transport so scene_load and other tools know which game project to use. With stdio, cwd comes from MCP config."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        cwd: %{
+          type: "string",
+          description: "Absolute path to the game project root (e.g. /path/to/pong)"
+        },
+        app: %{
+          type: "string",
+          description: "Optional app name (e.g. pong). Inferred from mix.exs if omitted."
+        }
+      },
+      required: ["cwd"]
+    })
+  end
 
   deftool "project_structure" do
     meta do
@@ -402,8 +426,47 @@ defmodule Lunity.MCP.Server do
     })
   end
 
+  # Apply project context from state (set via set_project tool) so Lunity.priv_dir etc. work
+  defp apply_project_context(state) do
+    if cwd = state[:project_cwd] do
+      Process.put(:lunity_project_cwd, cwd)
+      if app = state[:project_app], do: Process.put(:lunity_project_app, app)
+    end
+    state
+  end
+
   @impl true
-  def handle_tool_call("project_structure", _args, state) do
+  def handle_tool_call(tool_name, args, state) do
+    state = apply_project_context(state)
+    do_handle_tool_call(tool_name, args, state)
+  end
+
+  defp do_handle_tool_call("set_project", %{"cwd" => cwd} = args, state) when is_binary(cwd) do
+    cwd = String.trim(cwd)
+    app =
+      case args["app"] do
+        a when is_binary(a) and a != "" -> String.to_atom(a)
+        _ -> infer_app_from_mix(cwd)
+      end
+
+    # Store in ETS so editor process (which runs SceneLoader) can use it
+    State.put_project_context(cwd, app)
+
+    state =
+      state
+      |> Map.put(:project_cwd, cwd)
+      |> Map.put(:project_app, app)
+
+    content = "Project set: cwd=#{cwd}, app=#{app || "nil"}"
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+  end
+
+  defp do_handle_tool_call("set_project", _args, state) do
+    content = "set_project requires 'cwd' (e.g. {\"cwd\": \"/path/to/your_game\"})."
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
+  defp do_handle_tool_call("project_structure", _args, state) do
     content = """
     Lunity project structure (game's priv/ when Lunity is a dependency):
 
@@ -422,8 +485,9 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("scene_load", %{"path" => path}, state) when is_binary(path) do
-    State.put_load_command(path)
+  defp do_handle_tool_call("scene_load", %{"path" => path}, state) when is_binary(path) do
+    {cwd, app} = {state[:project_cwd], state[:project_app]}
+    State.put_load_command(path, cwd, app)
 
     # Poll for result (editor processes on next frame, ~16ms at 60fps)
     result = poll_load_result(60, 50)
@@ -444,12 +508,12 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("scene_load", _args, state) do
+  defp do_handle_tool_call("scene_load", _args, state) do
     content = "scene_load requires a 'path' argument (e.g. {\"path\": \"box\"})."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("scene_get_hierarchy", _args, state) do
+  defp do_handle_tool_call("scene_get_hierarchy", _args, state) do
     case State.get_scene() do
       nil ->
         content = "No scene loaded. Use scene_load first."
@@ -462,7 +526,7 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("get_blender_extras_script", %{"behaviour" => behaviour}, state)
+  defp do_handle_tool_call("get_blender_extras_script", %{"behaviour" => behaviour}, state)
       when is_binary(behaviour) do
     case BlenderExtras.generate_script(behaviour) do
       {:ok, script} ->
@@ -474,14 +538,14 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("get_blender_extras_script", _args, state) do
+  defp do_handle_tool_call("get_blender_extras_script", _args, state) do
     content =
       "get_blender_extras_script requires a 'behaviour' argument (e.g. {\"behaviour\": \"MyGame.Behaviours.Door\"})."
 
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("editor_get_context", _args, state) do
+  defp do_handle_tool_call("editor_get_context", _args, state) do
     content =
       case State.get_context() do
         nil ->
@@ -497,7 +561,7 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("editor_set_context", %{"type" => type, "path" => path}, state)
+  defp do_handle_tool_call("editor_set_context", %{"type" => type, "path" => path}, state)
       when type in ["scene", "prefab"] and is_binary(path) do
     atom_type = if type == "scene", do: :scene, else: :prefab
     State.set_context(atom_type, path)
@@ -520,14 +584,14 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("editor_set_context", _args, state) do
+  defp do_handle_tool_call("editor_set_context", _args, state) do
     content =
       "editor_set_context requires 'type' ('scene' or 'prefab') and 'path' (e.g. {\"type\": \"scene\", \"path\": \"box\"})."
 
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("editor_push", _args, state) do
+  defp do_handle_tool_call("editor_push", _args, state) do
     {content, is_error} =
       case State.context_push() do
         :ok -> {"Context pushed onto stack.", false}
@@ -537,7 +601,7 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("editor_pop", _args, state) do
+  defp do_handle_tool_call("editor_pop", _args, state) do
     {content, is_error} =
       case State.context_pop() do
         {:ok, entry} ->
@@ -550,7 +614,7 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("editor_peek", _args, state) do
+  defp do_handle_tool_call("editor_peek", _args, state) do
     stack = State.context_peek()
     summary = Enum.map(stack, fn e -> "#{e.type} #{e.path}" end)
     content = Jason.encode!(%{stack: summary, count: length(stack)})
@@ -558,12 +622,12 @@ defmodule Lunity.MCP.Server do
   end
 
   # Phase 6d handlers
-  def handle_tool_call("view_list", _args, state) do
+  defp do_handle_tool_call("view_list", _args, state) do
     content = Jason.encode!(%{views: ["main"]})
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("view_capture", args, state) do
+  defp do_handle_tool_call("view_capture", args, state) do
     view_id = Map.get(args || %{}, "view_id", "main")
     State.put_capture_request(view_id)
     result = poll_capture_result(60, 50)
@@ -596,7 +660,7 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("entity_list", args, state) do
+  defp do_handle_tool_call("entity_list", args, state) do
     component_filter = args && Map.get(args, "component")
     entities = State.get_entities()
     entity_ids = Enum.map(entities, fn {_node, eid} -> eid end)
@@ -626,7 +690,7 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("entity_get", %{"entity_id" => eid, "component" => comp}, state)
+  defp do_handle_tool_call("entity_get", %{"entity_id" => eid, "component" => comp}, state)
       when is_integer(eid) and is_binary(comp) do
     case resolve_component_module(comp) do
       {:ok, mod} ->
@@ -646,12 +710,12 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("entity_get", _args, state) do
+  defp do_handle_tool_call("entity_get", _args, state) do
     content = "entity_get requires entity_id and component."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("entity_at_screen", %{"x" => x, "y" => y}, state)
+  defp do_handle_tool_call("entity_at_screen", %{"x" => x, "y" => y}, state)
       when is_number(x) and is_number(y) do
     State.put_pick_request(x, y)
     result = poll_pick_result(60, 50)
@@ -673,12 +737,12 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("entity_at_screen", _args, state) do
+  defp do_handle_tool_call("entity_at_screen", _args, state) do
     content = "entity_at_screen requires x and y."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("node_screen_bounds", args, state) do
+  defp do_handle_tool_call("node_screen_bounds", args, state) do
     case {State.get_scene(), State.get_orbit(), State.get_viewport()} do
       {scene, orbit, {vp_w, vp_h}} when not is_nil(scene) and not is_nil(orbit) ->
         viewport = {0, 0, vp_w, vp_h}
@@ -693,26 +757,26 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("camera_state", _args, state) do
+  defp do_handle_tool_call("camera_state", _args, state) do
     orbit = State.get_orbit()
     content = (orbit && orbit_to_map(orbit) |> Jason.encode!()) || "No camera."
     is_error = orbit == nil
     {:ok, %{content: [%{type: "text", text: content}], is_error?: is_error}, state}
   end
 
-  def handle_tool_call("view_annotate", %{"shapes" => shapes}, state) when is_list(shapes) do
+  defp do_handle_tool_call("view_annotate", %{"shapes" => shapes}, state) when is_list(shapes) do
     normalized = Enum.map(shapes, &normalize_annotation_shape/1)
     State.add_annotations(normalized)
     content = "Added #{length(shapes)} annotation(s)."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("view_annotate", _args, state) do
+  defp do_handle_tool_call("view_annotate", _args, state) do
     content = "view_annotate requires shapes array."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
-  def handle_tool_call("highlight_node", args, state) do
+  defp do_handle_tool_call("highlight_node", args, state) do
     target = args["entity_id"] || args["node_name"]
     duration = args["duration_ms"] || 2000
 
@@ -726,32 +790,32 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("clear_annotations", _args, state) do
+  defp do_handle_tool_call("clear_annotations", _args, state) do
     State.clear_annotations()
     State.clear_highlight()
     content = "Annotations and highlights cleared."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("pause", _args, state) do
+  defp do_handle_tool_call("pause", _args, state) do
     State.put_game_paused(true)
     content = "Game paused."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("step", _args, state) do
+  defp do_handle_tool_call("step", _args, state) do
     State.put_step_request()
     content = "Step requested. One tick will run when paused."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call("resume", _args, state) do
+  defp do_handle_tool_call("resume", _args, state) do
     State.put_game_paused(false)
     content = "Game resumed."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  def handle_tool_call(
+  defp do_handle_tool_call(
         "entity_set",
         %{"entity_id" => eid, "component" => comp, "value" => val},
         state
@@ -777,9 +841,13 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  def handle_tool_call("entity_set", _args, state) do
+  defp do_handle_tool_call("entity_set", _args, state) do
     content = "entity_set requires entity_id, component, and value (map)."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
+  defp do_handle_tool_call(_tool_name, _args, state) do
+    {:error, :tool_not_implemented, state}
   end
 
   defp orbit_to_map(nil), do: nil
@@ -832,6 +900,24 @@ defmodule Lunity.MCP.Server do
       result ->
         result
     end
+  end
+
+  defp infer_app_from_mix(cwd) do
+    mix_exs = Path.join(cwd, "mix.exs")
+    if File.exists?(mix_exs) do
+      case File.read(mix_exs) do
+        {:ok, content} ->
+          case Regex.run(~r/app:\s*:(\w+)/, content) do
+            [_, app_str] -> String.to_atom(app_str)
+            _ -> nil
+          end
+        _ -> nil
+      end
+    else
+      nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp resolve_component_module(name) when is_binary(name) do

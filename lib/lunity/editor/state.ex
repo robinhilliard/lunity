@@ -10,7 +10,9 @@ defmodule Lunity.Editor.State do
   - `:orbit` - Current EAGL.OrbitCamera (written by View each frame)
   - `:orbit_command` - `{:set_orbit, orbit}` when MCP wants to change camera
   - `:orbit_after_load` - orbit to apply after next load completes (used by context_pop)
-  - `:load_command` - `{:load_scene, path}` or `{:load_prefab, id}` when MCP requests a load
+  - `:load_command` - `{:load_scene, path}` or `{:load_scene, path, cwd, app}` or `{:load_prefab, id}` when MCP requests a load
+  - `:project_cwd` - Project root from set_project (for loading modules when editor runs in different process)
+  - `:project_app` - App name from set_project
   - `:load_result` - `{:ok, ...}` or `{:error, reason}` after load attempt
   - `:context_stack` - Stack of `%{type: type, path: path, orbit: orbit}` for push/pop
   - `:viewport` - `{width, height}` of the main view (written by View each frame)
@@ -92,9 +94,34 @@ defmodule Lunity.Editor.State do
     end
   end
 
-  @doc "Queue a scene load. The editor view will process this on the next frame."
-  def put_load_command(path) do
-    :ets.insert(@table, {:load_command, {:load_scene, path}})
+  @doc "Set project context from set_project tool. Used by SceneLoader to find modules."
+  def put_project_context(cwd, app) when is_binary(cwd) do
+    case :ets.whereis(@table) do
+      :undefined -> :ok
+      _ ->
+        :ets.insert(@table, {:project_cwd, cwd})
+        :ets.insert(@table, {:project_app, app})
+        :ok
+    end
+  end
+
+  @doc "Get project context. Returns {cwd, app} or nil."
+  def get_project_context do
+    case :ets.whereis(@table) do
+      :undefined -> nil
+      _ ->
+        case {:ets.lookup(@table, :project_cwd), :ets.lookup(@table, :project_app)} do
+          {[{:project_cwd, cwd}], [{:project_app, app}]} -> {cwd, app}
+          {[{:project_cwd, cwd}], []} -> {cwd, nil}
+          _ -> nil
+        end
+    end
+  end
+
+  @doc "Queue a scene load. The editor view will process this on the next frame. Optionally pass project context from set_project."
+  def put_load_command(path, cwd \\ nil, app \\ nil) do
+    cmd = if cwd, do: {:load_scene, path, cwd, app}, else: {:load_scene, path}
+    :ets.insert(@table, {:load_command, cmd})
     :ok
   end
 
