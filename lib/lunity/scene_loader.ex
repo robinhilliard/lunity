@@ -147,14 +147,18 @@ defmodule Lunity.SceneLoader do
     with {:ok, prefab_scene, prefab_config} <- PrefabLoader.load_prefab(prefab_id, opts),
          merged_config <- ConfigLoader.merge_config(prefab_config, overrides),
          temp = Node.new(),
-         {:ok, _temp_with_prefab, _} <-
+         {:ok, temp_with_prefab, _} <-
            PrefabLoader.instantiate_prefab_from_loaded(
              prefab_scene,
              prefab_config,
              temp,
              overrides
            ) do
-      prefab_root = hd(temp.children || [])
+      prefab_root =
+        case temp_with_prefab.children do
+          [root | _] -> root
+          _ -> raise "Prefab must have at least one root node"
+        end
 
       # Copy placeholder transform to prefab root
       prefab_root =

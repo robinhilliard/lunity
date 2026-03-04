@@ -73,14 +73,11 @@ defmodule Lunity.EntityFactory do
 
   defp load_component_list(path, opts) do
     case ConfigLoader.load_config(path, opts) do
-      {:ok, %{config: list}} when is_list(list) ->
-        {:ok, list}
+      {:ok, %{config: list}} ->
+        if is_list(list), do: {:ok, list}, else: config_format_error(list)
 
-      {:ok, %{components: list}} when is_list(list) ->
-        {:ok, list}
-
-      {:ok, list} when is_list(list) ->
-        {:ok, list}
+      {:ok, %{components: list}} ->
+        if is_list(list), do: {:ok, list}, else: config_format_error(list)
 
       {:ok, other} ->
         {:error, {:invalid_config_format, "expected list of component structs, got: #{inspect(other)}"}}
@@ -89,6 +86,8 @@ defmodule Lunity.EntityFactory do
         err
     end
   end
+
+  defp config_format_error(got), do: {:error, {:invalid_config_format, "expected list of component structs, got: #{inspect(got)}"}}
 
   defp merge_overrides(config_list, overrides) when is_list(overrides) do
     config_map = Map.new(config_list, fn s -> {s.__struct__, s} end)
