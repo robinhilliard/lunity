@@ -1,6 +1,27 @@
 # Lunity
 
-Game engine and editor utilities for EAGL. Provides debug drawing, config loading, prefabs, ECSx integration (SceneLoader, EntityFactory, NodeBehaviour), and (in later phases) MCP tooling.
+Game engine and editor utilities for EAGL. Provides debug drawing, config loading, prefabs, ECSx integration (SceneLoader, EntityFactory, NodeBehaviour), and MCP tooling for agent-driven development.
+
+## Project structure
+
+When Lunity is a dependency, your game's `priv/` layout:
+
+```
+priv/
+  prefabs/
+    *.glb           # glTF only; config in config/prefabs/
+  scenes/
+    *.glb           # glTF only; config in config/scenes/
+  config/           # Code-behind configs
+    scenes/
+    prefabs/
+```
+
+Paths resolve via `Application.app_dir(app, "priv")` where `app` is your application. Loaders use convention-based resolution; directory walking is sufficient for typical project sizes.
+
+## MCP server
+
+Run `mix lunity.mcp` to start the Lunity MCP server (stdio transport for Cursor). Configure in Cursor's MCP settings with `cwd` set to your game project path. Phase 6a provides the skeleton; tools are added incrementally.
 
 ## Installation
 
