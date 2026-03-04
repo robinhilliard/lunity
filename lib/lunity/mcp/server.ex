@@ -486,7 +486,11 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("scene_load", %{"path" => path}, state) when is_binary(path) do
-    {cwd, app} = {state[:project_cwd], state[:project_app]}
+    {cwd, app} =
+      case {state[:project_cwd], state[:project_app]} do
+        {c, a} when not is_nil(c) -> {c, a}
+        _ -> State.get_project_context() || {nil, nil}
+      end
     State.put_load_command(path, cwd, app)
 
     # Poll for result (editor processes on next frame, ~16ms at 60fps)
