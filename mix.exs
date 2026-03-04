@@ -25,6 +25,7 @@ defmodule Lunity.MixProject do
       {:eagl, "~> 0.13", path: "../eagl"},
       {:ecsx, "~> 0.5"},
       {:ex_mcp, "~> 0.7"},
+      {:png, "~> 0.2"},
       {:stb_image, "~> 0.6"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]

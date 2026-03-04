@@ -192,7 +192,7 @@ defmodule Lunity.MCP.Server do
       name("View Capture")
 
       description(
-        "Capture a view as base64-encoded RGBA image. Returns format, width, height, and data. Requires editor with GL context."
+        "Capture a view as PNG. Returns format, width, height, base64 data, and data_url (ready for vision APIs). Requires editor with GL context."
       )
     end
 
@@ -573,13 +573,15 @@ defmodule Lunity.MCP.Server do
         {:ok, base64} ->
           vp = State.get_viewport()
           {w, h} = vp || {0, 0}
+          data_url = "data:image/png;base64,#{base64}"
 
           json =
             Jason.encode!(%{
-              format: "raw_rgba",
+              format: "png",
               width: w,
               height: h,
-              data: base64
+              data: base64,
+              data_url: data_url
             })
 
           {json, false}

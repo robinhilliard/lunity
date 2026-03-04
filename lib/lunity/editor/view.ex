@@ -129,7 +129,8 @@ defmodule Lunity.Editor.View do
       pixel_data = <<0::size(width * height * 4)-unit(8)>>
       :gl.readPixels(0, 0, width, height, @gl_rgba, @gl_unsigned_byte, pixel_data)
       flipped = flip_pixels_vertical(pixel_data, width, height)
-      {:ok, Base.encode64(flipped)}
+      png_base64 = rgba_to_png_base64(flipped, width, height)
+      {:ok, png_base64}
     rescue
       e -> {:error, Exception.message(e)}
     end
@@ -147,6 +148,29 @@ defmodule Lunity.Editor.View do
       end
 
     rows |> Enum.reverse() |> IO.iodata_to_binary()
+  end
+
+  defp rgba_to_png_base64(rgba_binary, width, height) do
+    tmp = Path.join(System.tmp_dir!(), "lunity_capture_#{System.unique_integer([:positive])}.png")
+
+    try do
+      png =
+        :png.create(%{
+          size: {width, height},
+          mode: {:rgba, 8},
+          file: tmp
+        })
+
+      row_bytes = width * 4
+      rows = for i <- 0..(height - 1), do: binary_part(rgba_binary, i * row_bytes, row_bytes)
+      :png.append(png, {:rows, rows})
+      :png.close(png)
+
+      png_binary = File.read!(tmp)
+      Base.encode64(png_binary)
+    after
+      File.rm(tmp)
+    end
   end
 
   defp process_pick_request(state, w, h) do
