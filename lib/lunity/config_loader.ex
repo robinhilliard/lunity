@@ -91,6 +91,7 @@ defmodule Lunity.ConfigLoader do
   """
   @spec merge_config(map() | keyword(), map() | nil) :: map()
   def merge_config(config, nil), do: to_map(config)
+
   def merge_config(config, properties) when is_map(properties) do
     config_map = to_map(config)
     # Filter nil values from properties; they do not override config
@@ -159,11 +160,15 @@ defmodule Lunity.ConfigLoader do
 
   defp to_map(nil), do: %{}
   defp to_map([]), do: %{}
-  defp to_map([{k, _} | _] = list) when is_list(list) and (is_atom(k) or is_binary(k)), do: Map.new(list)
+
+  defp to_map([{k, _} | _] = list) when is_list(list) and (is_atom(k) or is_binary(k)),
+    do: Map.new(list)
+
   defp to_map(map) when is_map(map), do: map
   defp to_map(other), do: %{config: other}
 
   defp normalize_key(k) when is_atom(k), do: k
+
   defp normalize_key(k) when is_binary(k) do
     try do
       String.to_existing_atom(k)

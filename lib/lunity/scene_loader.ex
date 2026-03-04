@@ -181,6 +181,7 @@ defmodule Lunity.SceneLoader do
 
       # Run behaviour on prefab root if it has one
       prefab_props = prefab_root.properties || %{}
+
       {prefab_root, acc} =
         if prefab_props["behaviour"] do
           case run_behaviour_init(prefab_root, prefab_props, merged_config) do

@@ -6,11 +6,11 @@ defmodule Lunity.NodeBehaviourTest do
   defmodule SampleBehaviour do
     use Lunity.NodeBehaviour
 
-    behaviour_properties [
+    behaviour_properties(
       health: [type: :integer, default: 100, min: 0, max: 200],
       open_angle: [type: :float, default: 90, min: 0, max: 360],
       key_id: [type: :string]
-    ]
+    )
 
     @impl Lunity.NodeBehaviour
     def init(_config, _entity_id), do: :ok
@@ -50,7 +50,8 @@ defmodule Lunity.NodeBehaviourTest do
     end
 
     test "returns error when extras is not a map" do
-      assert {:error, :extras_must_be_map} = NodeBehaviour.validate_extras(SampleBehaviour, "invalid")
+      assert {:error, :extras_must_be_map} =
+               NodeBehaviour.validate_extras(SampleBehaviour, "invalid")
     end
   end
 

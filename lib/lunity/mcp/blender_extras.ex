@@ -27,7 +27,10 @@ defmodule Lunity.MCP.BlenderExtras do
   defp resolve_module(name) do
     try do
       module = NodeBehaviour.resolve_module(name)
-      if function_exported?(module, :__extras_spec__, 0), do: {:ok, module}, else: {:error, :not_a_behaviour}
+
+      if function_exported?(module, :__extras_spec__, 0),
+        do: {:ok, module},
+        else: {:error, :not_a_behaviour}
     rescue
       _ -> {:error, {:behaviour_not_found, name}}
     end
@@ -62,6 +65,7 @@ defmodule Lunity.MCP.BlenderExtras do
     prop_lines =
       Enum.flat_map(spec, fn {key, opts} ->
         {py_name, py_value, py_type, min_val, max_val} = spec_to_python(key, opts)
+
         [
           "    add_property(obj, #{inspect(py_name)}, #{py_value}, #{inspect(py_type)}, #{min_val}, #{max_val})"
         ]

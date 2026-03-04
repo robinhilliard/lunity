@@ -94,11 +94,18 @@ defmodule Lunity.NodeBehaviour do
   """
   def from_config(module, merged_config) when is_map(merged_config) do
     spec = extras_spec(module)
+
     if spec do
-      struct(module, Enum.map(spec, fn {key, opts} ->
-        value = Map.get(merged_config, key) || Map.get(merged_config, to_string(key)) || opts[:default]
-        {key, value}
-      end))
+      struct(
+        module,
+        Enum.map(spec, fn {key, opts} ->
+          value =
+            Map.get(merged_config, key) || Map.get(merged_config, to_string(key)) ||
+              opts[:default]
+
+          {key, value}
+        end)
+      )
     else
       struct(module, merged_config)
     end
@@ -123,6 +130,7 @@ defmodule Lunity.NodeBehaviour do
         {name, opts} when is_list(opts) ->
           default = Keyword.get(opts, :default)
           {name, default}
+
         {name, _} ->
           {name, nil}
       end)
@@ -131,6 +139,7 @@ defmodule Lunity.NodeBehaviour do
       Enum.map(properties, fn
         {name, opts} when is_list(opts) ->
           {name, opts}
+
         {name, _} ->
           {name, []}
       end)
@@ -168,6 +177,7 @@ defmodule Lunity.NodeBehaviour do
       end
 
     min_val = opts[:min]
+
     errors =
       if min_val && is_number(value) && value < min_val do
         [{key, "must be >= #{min_val}"} | errors]
@@ -176,6 +186,7 @@ defmodule Lunity.NodeBehaviour do
       end
 
     max_val = opts[:max]
+
     errors =
       if max_val && is_number(value) && value > max_val do
         [{key, "must be <= #{max_val}"} | errors]

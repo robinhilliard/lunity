@@ -121,7 +121,10 @@ defmodule Lunity.PrefabLoader do
   def instantiate_prefab_from_loaded(scene, config, parent, overrides \\ %{}) do
     merged_config = ConfigLoader.merge_config(config, overrides)
     cloned_roots = Enum.map(scene.root_nodes, &clone_node/1)
-    updated_parent = Enum.reduce(cloned_roots, parent, fn root, acc -> Node.add_child(acc, root) end)
+
+    updated_parent =
+      Enum.reduce(cloned_roots, parent, fn root, acc -> Node.add_child(acc, root) end)
+
     {:ok, updated_parent, merged_config}
   end
 

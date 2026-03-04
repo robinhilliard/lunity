@@ -255,7 +255,9 @@ defmodule Lunity.Debug do
     draw_skybox_cube(view_rot, proj)
   end
 
-  defp strip_translation([{m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, _m12, _m13, _m14, m15}]) do
+  defp strip_translation([
+         {m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, _m12, _m13, _m14, m15}
+       ]) do
     # Column-major: translation is in elements 12,13,14. Set to 0 for skybox (stays at camera).
     [{m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, 0.0, 0.0, 0.0, m15}]
   end
@@ -296,14 +298,38 @@ defmodule Lunity.Debug do
     # Front face (z=+1): 0,1,2,3 -> 4,5,6,7 in indices
     # Vertices: 0=(-1,-1,-1), 1=(+1,-1,-1), 2=(-1,+1,-1), 3=(+1,+1,-1), 4=(-1,-1,+1), 5=(+1,-1,+1), 6=(-1,+1,+1), 7=(+1,+1,+1)
     [
-      -1.0, -1.0, -1.0,  # 0
-      1.0, -1.0, -1.0,   # 1
-      -1.0, 1.0, -1.0,   # 2
-      1.0, 1.0, -1.0,    # 3
-      -1.0, -1.0, 1.0,   # 4
-      1.0, -1.0, 1.0,    # 5
-      -1.0, 1.0, 1.0,    # 6
-      1.0, 1.0, 1.0      # 7
+      # 0
+      -1.0,
+      -1.0,
+      -1.0,
+      # 1
+      1.0,
+      -1.0,
+      -1.0,
+      # 2
+      -1.0,
+      1.0,
+      -1.0,
+      # 3
+      1.0,
+      1.0,
+      -1.0,
+      # 4
+      -1.0,
+      -1.0,
+      1.0,
+      # 5
+      1.0,
+      -1.0,
+      1.0,
+      # 6
+      -1.0,
+      1.0,
+      1.0,
+      # 7
+      1.0,
+      1.0,
+      1.0
     ]
   end
 
@@ -316,12 +342,42 @@ defmodule Lunity.Debug do
     # Bottom (-y): 0,4,1, 4,5,1
     # Top (+y): 2,3,6, 3,7,6
     [
-      0, 1, 2, 1, 3, 2,
-      5, 4, 7, 4, 6, 7,
-      4, 0, 6, 0, 2, 6,
-      1, 5, 3, 5, 7, 3,
-      0, 4, 1, 4, 5, 1,
-      2, 3, 6, 3, 7, 6
+      0,
+      1,
+      2,
+      1,
+      3,
+      2,
+      5,
+      4,
+      7,
+      4,
+      6,
+      7,
+      4,
+      0,
+      6,
+      0,
+      2,
+      6,
+      1,
+      5,
+      3,
+      5,
+      7,
+      3,
+      0,
+      4,
+      1,
+      4,
+      5,
+      1,
+      2,
+      3,
+      6,
+      3,
+      7,
+      6
     ]
   end
 
@@ -332,7 +388,10 @@ defmodule Lunity.Debug do
         fs_code = skybox_fragment_code()
 
         {:ok, vs} = EAGL.Shader.create_shader_from_source(@gl_vertex_shader, vs_code, "skybox_vs")
-        {:ok, fs} = EAGL.Shader.create_shader_from_source(@gl_fragment_shader, fs_code, "skybox_fs")
+
+        {:ok, fs} =
+          EAGL.Shader.create_shader_from_source(@gl_fragment_shader, fs_code, "skybox_fs")
+
         {:ok, program} = EAGL.Shader.create_attach_link([vs, fs])
         Process.put(:lunity_skybox_program, program)
         program
