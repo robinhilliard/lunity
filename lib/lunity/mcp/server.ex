@@ -19,8 +19,7 @@ defmodule Lunity.MCP.Server do
 
     input_schema %{
       type: "object",
-      properties: %{},
-      required: []
+      properties: %{}
     }
   end
 
@@ -41,6 +40,6 @@ defmodule Lunity.MCP.Server do
     Paths are project-relative. Resolve via Application.app_dir(app, "priv").
     """
 
-    {:ok, %{content: [%{type: "text", text: content}]}, state}
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 end
