@@ -13,6 +13,14 @@ defmodule Lunity.Editor.State do
   - `:load_command` - `{:load_scene, path}` or `{:load_prefab, id}` when MCP requests a load
   - `:load_result` - `{:ok, ...}` or `{:error, reason}` after load attempt
   - `:context_stack` - Stack of `%{type: type, path: path, orbit: orbit}` for push/pop
+  - `:viewport` - `{width, height}` of the main view (written by View each frame)
+  - `:capture_request` - `{:capture, view_id}` when MCP requests screenshot
+  - `:capture_result` - `{:ok, base64_png}` or `{:error, reason}` after capture
+  - `:pick_request` - `{:pick, x, y}` when MCP requests entity_at_screen
+  - `:pick_result` - `{:ok, node, entity_id}` or `nil` after pick
+  - `:game_paused` - boolean for pause/step/resume
+  - `:annotations` - list of overlay shapes for view_annotate
+  - `:highlight_node` - `{node_id, duration_ms, expires_at}` for highlight_node
   """
   @table :lunity_editor_state
 
@@ -65,6 +73,14 @@ defmodule Lunity.Editor.State do
         :ets.delete(@table, :context_type)
         :ets.delete(@table, :entities)
         :ok
+    end
+  end
+
+  @doc "Get entities from the loaded scene. Returns [{node, entity_id}, ...] or []."
+  def get_entities do
+    case :ets.lookup(@table, :entities) do
+      [{:entities, entities}] -> entities
+      [] -> []
     end
   end
 
@@ -239,5 +255,178 @@ defmodule Lunity.Editor.State do
       :scene -> put_load_command(path)
       :prefab -> put_load_prefab_command(path)
     end
+  end
+
+  # Phase 6d: Viewport (View writes each frame)
+  @doc "Store viewport dimensions. Called by View each frame."
+  def put_viewport(width, height) do
+    :ets.insert(@table, {:viewport, {width, height}})
+    :ok
+  end
+
+  @doc "Get viewport. Returns {width, height} or nil."
+  def get_viewport do
+    case :ets.lookup(@table, :viewport) do
+      [{:viewport, vp}] -> vp
+      [] -> nil
+    end
+  end
+
+  # Phase 6d: View capture (MCP requests, View performs on GL thread)
+  @doc "Request a view capture. View processes on next frame."
+  def put_capture_request(view_id \\ "main") do
+    :ets.insert(@table, {:capture_request, {:capture, view_id}})
+    :ok
+  end
+
+  @doc "Take and clear capture request. Returns {:capture, view_id} or nil."
+  def take_capture_request do
+    case :ets.lookup(@table, :capture_request) do
+      [{:capture_request, req}] ->
+        :ets.delete(@table, :capture_request)
+        req
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "Store capture result for MCP to read."
+  def put_capture_result(result) do
+    :ets.insert(@table, {:capture_result, result})
+    :ok
+  end
+
+  @doc "Take capture result. Returns result or nil."
+  def take_capture_result do
+    case :ets.lookup(@table, :capture_result) do
+      [{:capture_result, result}] ->
+        :ets.delete(@table, :capture_result)
+        result
+
+      [] ->
+        nil
+    end
+  end
+
+  # Phase 6d: Pick (MCP requests, View performs on GL thread)
+  @doc "Request a pick at screen coordinates. View processes on next frame."
+  def put_pick_request(x, y) when is_number(x) and is_number(y) do
+    :ets.insert(@table, {:pick_request, {:pick, trunc(x), trunc(y)}})
+    :ok
+  end
+
+  @doc "Take and clear pick request. Returns {:pick, x, y} or nil."
+  def take_pick_request do
+    case :ets.lookup(@table, :pick_request) do
+      [{:pick_request, req}] ->
+        :ets.delete(@table, :pick_request)
+        req
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "Store pick result for MCP to read."
+  def put_pick_result(result) do
+    :ets.insert(@table, {:pick_result, result})
+    :ok
+  end
+
+  @doc "Take pick result. Returns result or nil."
+  def take_pick_result do
+    case :ets.lookup(@table, :pick_result) do
+      [{:pick_result, result}] ->
+        :ets.delete(@table, :pick_result)
+        result
+
+      [] ->
+        nil
+    end
+  end
+
+  # Phase 6d: Pause/step/resume (game loop control)
+  @doc "Get whether game is paused."
+  def get_game_paused do
+    case :ets.lookup(@table, :game_paused) do
+      [{:game_paused, paused}] -> paused
+      [] -> false
+    end
+  end
+
+  @doc "Set game paused state."
+  def put_game_paused(paused) when is_boolean(paused) do
+    :ets.insert(@table, {:game_paused, paused})
+    :ok
+  end
+
+  @doc "Request a single step (when paused). Cleared after one tick."
+  def put_step_request do
+    :ets.insert(@table, {:step_request, true})
+    :ok
+  end
+
+  @doc "Take step request. Returns true if step was requested."
+  def take_step_request do
+    case :ets.lookup(@table, :step_request) do
+      [{:step_request, _}] ->
+        :ets.delete(@table, :step_request)
+        true
+
+      [] ->
+        false
+    end
+  end
+
+  # Phase 6d: Annotations and highlights (overlay rendering)
+  @doc "Add annotation shapes. Each is %{type: :rect|:circle|:text, ...}."
+  def add_annotations(shapes) when is_list(shapes) do
+    current = get_annotations() || []
+    :ets.insert(@table, {:annotations, current ++ shapes})
+    :ok
+  end
+
+  @doc "Get annotations list."
+  def get_annotations do
+    case :ets.lookup(@table, :annotations) do
+      [{:annotations, list}] -> list
+      [] -> []
+    end
+  end
+
+  @doc "Clear all annotations."
+  def clear_annotations do
+    :ets.delete(@table, :annotations)
+    :ok
+  end
+
+  @doc "Set highlight target. entity_id when available, else node_name. Duration in ms."
+  def put_highlight(entity_id_or_name, duration_ms) when is_integer(duration_ms) do
+    expires = System.monotonic_time(:millisecond) + duration_ms
+    :ets.insert(@table, {:highlight, {entity_id_or_name, expires}})
+    :ok
+  end
+
+  @doc "Get current highlight if not expired."
+  def get_highlight do
+    case :ets.lookup(@table, :highlight) do
+      [{:highlight, {target, expires}}] ->
+        if System.monotonic_time(:millisecond) < expires do
+          {target, expires}
+        else
+          :ets.delete(@table, :highlight)
+          nil
+        end
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "Clear highlight."
+  def clear_highlight do
+    :ets.delete(@table, :highlight)
+    :ok
   end
 end

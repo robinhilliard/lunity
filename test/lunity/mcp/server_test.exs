@@ -142,4 +142,67 @@ defmodule Lunity.MCP.ServerTest do
       assert text =~ "path"
     end
   end
+
+  describe "Phase 6d tools" do
+    test "view_list returns main view" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("view_list", %{}, nil)
+
+      assert text =~ "main"
+    end
+
+    test "entity_list returns empty when no scene" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("entity_list", %{}, nil)
+
+      assert text =~ "count"
+      assert text =~ "0"
+    end
+
+    test "pause and resume" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("pause", %{}, nil)
+
+      assert text =~ "paused"
+
+      assert {:ok, %{content: [%{type: "text", text: text2}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("resume", %{}, nil)
+
+      assert text2 =~ "resumed"
+    end
+
+    test "clear_annotations" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
+               Lunity.MCP.Server.handle_tool_call("clear_annotations", %{}, nil)
+
+      assert text =~ "cleared"
+    end
+
+    test "entity_at_screen requires x and y" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("entity_at_screen", %{}, nil)
+
+      assert text =~ "x"
+      assert text =~ "y"
+    end
+
+    test "entity_set requires entity_id, component, value" do
+      {:ok, _server} = Lunity.MCP.Server.start_link(transport: :test)
+
+      assert {:ok, %{content: [%{type: "text", text: text}], is_error?: true}, _} =
+               Lunity.MCP.Server.handle_tool_call("entity_set", %{}, nil)
+
+      assert text =~ "entity_id"
+    end
+  end
 end

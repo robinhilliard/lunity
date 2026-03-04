@@ -43,6 +43,9 @@ defmodule Lunity.Editor.View do
   def render(w, h, state) do
     state = apply_orbit_command(state)
     state = process_load_command(state)
+    State.put_viewport(w, h)
+    state = process_capture_request(state, w, h)
+    state = process_pick_request(state, w, h)
     {:ok, state} = do_render(w, h, state)
     sync_orbit_to_ets(state)
     {:ok, state}
@@ -100,6 +103,77 @@ defmodule Lunity.Editor.View do
 
   defp sync_orbit_to_ets(%{orbit: orbit}) do
     State.put_orbit(orbit)
+  end
+
+  defp process_capture_request(state, w, h) do
+    case State.take_capture_request() do
+      {:capture, _view_id} ->
+        case do_capture(trunc(w), trunc(h)) do
+          {:ok, base64} ->
+            State.put_capture_result({:ok, base64})
+
+          {:error, reason} ->
+            State.put_capture_result({:error, reason})
+        end
+
+      nil ->
+        :ok
+    end
+
+    state
+  end
+
+  defp do_capture(width, height) when width > 0 and height > 0 do
+    try do
+      # glReadPixels returns bottom-to-top; flip for standard image orientation
+      pixel_data = <<0::size(width * height * 4)-unit(8)>>
+      :gl.readPixels(0, 0, width, height, @gl_rgba, @gl_unsigned_byte, pixel_data)
+      flipped = flip_pixels_vertical(pixel_data, width, height)
+      {:ok, Base.encode64(flipped)}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
+  defp do_capture(_, _), do: {:error, :invalid_viewport}
+
+  defp flip_pixels_vertical(pixels, width, height) do
+    row_bytes = width * 4
+
+    rows =
+      for i <- 0..(height - 1) do
+        offset = i * row_bytes
+        binary_part(pixels, offset, row_bytes)
+      end
+
+    rows |> Enum.reverse() |> IO.iodata_to_binary()
+  end
+
+  defp process_pick_request(state, w, h) do
+    case State.take_pick_request() do
+      {:pick, x, y} ->
+        case {State.get_scene(), State.get_orbit()} do
+          {scene, orbit} when not is_nil(scene) and not is_nil(orbit) ->
+            viewport = {0, 0, trunc(w), trunc(h)}
+
+            case Scene.pick(scene, orbit, viewport, x, y) do
+              {:ok, node} ->
+                entity_id = (node.properties || %{})["entity_id"]
+                State.put_pick_result({:ok, node, entity_id})
+
+              nil ->
+                State.put_pick_result(nil)
+            end
+
+          _ ->
+            State.put_pick_result(nil)
+        end
+
+      nil ->
+        :ok
+    end
+
+    state
   end
 
   defp do_render(w, h, %{program: prog, orbit: orbit} = state) do
