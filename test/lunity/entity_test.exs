@@ -31,9 +31,9 @@ defmodule Lunity.EntityTest do
     def init(_config, _entity_id), do: :ok
   end
 
-  describe "extras_spec/1" do
-    test "returns the extras spec for an entity module" do
-      spec = Entity.extras_spec(SampleEntity)
+  describe "property_spec/1" do
+    test "returns the property spec for an entity module" do
+      spec = Entity.property_spec(SampleEntity)
       assert is_map(spec)
       assert Map.has_key?(spec, :health)
       assert spec.health[:type] == :integer
@@ -63,37 +63,37 @@ defmodule Lunity.EntityTest do
     end
   end
 
-  describe "validate_extras/2" do
-    test "returns :ok for valid extras" do
-      assert :ok = Entity.validate_extras(SampleEntity, %{"health" => 50})
-      assert :ok = Entity.validate_extras(SampleEntity, %{health: 150})
+  describe "validate_properties/2" do
+    test "returns :ok for valid properties" do
+      assert :ok = Entity.validate_properties(SampleEntity, %{"health" => 50})
+      assert :ok = Entity.validate_properties(SampleEntity, %{health: 150})
     end
 
     test "returns error for value below min" do
       assert {:error, [{:health, "must be >= 0"}]} =
-               Entity.validate_extras(SampleEntity, %{health: -1})
+               Entity.validate_properties(SampleEntity, %{health: -1})
     end
 
     test "returns error for value above max" do
       assert {:error, [{:health, "must be <= 200"}]} =
-               Entity.validate_extras(SampleEntity, %{health: 250})
+               Entity.validate_properties(SampleEntity, %{health: 250})
     end
 
     test "returns error for wrong type" do
       assert {:error, [{:health, "must be integer"}]} =
-               Entity.validate_extras(SampleEntity, %{health: "not a number"})
+               Entity.validate_properties(SampleEntity, %{health: "not a number"})
     end
 
-    test "returns error when extras is not a map" do
-      assert {:error, :extras_must_be_map} =
-               Entity.validate_extras(SampleEntity, "invalid")
+    test "returns error when properties is not a map" do
+      assert {:error, :properties_must_be_map} =
+               Entity.validate_properties(SampleEntity, "invalid")
     end
 
     test "validates atom values constraint" do
-      assert :ok = Entity.validate_extras(EntityWithComponents, %{side: :left})
+      assert :ok = Entity.validate_properties(EntityWithComponents, %{side: :left})
 
       assert {:error, [{:side, "must be one of [:left, :right]"}]} =
-               Entity.validate_extras(EntityWithComponents, %{side: :top})
+               Entity.validate_properties(EntityWithComponents, %{side: :top})
     end
   end
 

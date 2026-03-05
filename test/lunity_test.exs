@@ -1,8 +1,7 @@
 defmodule LunityTest do
   use ExUnit.Case
-  doctest Lunity
 
-  test "greets the world" do
-    assert Lunity.hello() == :world
+  test "project_app returns the configured app" do
+    assert is_atom(Lunity.project_app())
   end
 end

@@ -171,11 +171,21 @@ defmodule Lunity.Editor.FileWatcher do
 
   defp resolve_project_root do
     case State.get_project_context() do
-      {cwd, _} when is_binary(cwd) -> cwd
-      _ -> Application.get_env(:lunity, :project_priv) |> then(fn
-        nil -> case File.cwd() do {:ok, cwd} -> cwd; _ -> nil end
-        priv -> Path.dirname(priv)
-      end)
+      {cwd, _} when is_binary(cwd) ->
+        cwd
+
+      _ ->
+        Application.get_env(:lunity, :project_priv)
+        |> then(fn
+          nil ->
+            case File.cwd() do
+              {:ok, cwd} -> cwd
+              _ -> nil
+            end
+
+          priv ->
+            Path.dirname(priv)
+        end)
     end
   end
 end

@@ -283,6 +283,7 @@ defmodule Lunity.SceneLoader do
                 child
                 |> apply_transform(node_def)
                 |> Map.put(:name, to_string(node_def.name))
+                |> maybe_apply_material(node_def)
 
               {child, entity_entities} =
                 if node_def.entity do
@@ -307,7 +308,10 @@ defmodule Lunity.SceneLoader do
           end
 
         true ->
-          child = Node.new(name: to_string(node_def.name)) |> apply_transform(node_def)
+          child =
+            Node.new(name: to_string(node_def.name))
+            |> apply_transform(node_def)
+            |> maybe_apply_material(node_def)
 
           {child, entity_entities} =
             if node_def.entity do
@@ -335,6 +339,35 @@ defmodule Lunity.SceneLoader do
       end)
 
     {:ok, parent, entities ++ child_entities}
+  end
+
+  defp maybe_apply_material(node, %NodeDef{material: nil}), do: node
+
+  defp maybe_apply_material(node, %NodeDef{material: material}) do
+    mat =
+      case material do
+        %Lunity.Material{} -> material
+        map when is_map(map) -> Lunity.Material.from_map(map)
+      end
+
+    uniforms = Lunity.Material.to_pbr_uniforms(mat)
+    propagate_material_to_meshes(node, uniforms)
+  end
+
+  defp propagate_material_to_meshes(node, uniforms) do
+    node =
+      if node.mesh do
+        %{node | material_uniforms: uniforms}
+      else
+        node
+      end
+
+    updated_children =
+      Enum.map(node.children || [], fn c ->
+        propagate_material_to_meshes(c, uniforms)
+      end)
+
+    %{node | children: updated_children}
   end
 
   defp init_entity_from_def(%NodeDef{entity: entity_module}, merged_config)

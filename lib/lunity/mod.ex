@@ -183,7 +183,8 @@ defmodule Lunity.Mod do
   end
 
   defp extract_mod_info(other, mod_dir) do
-    {:error, {:invalid_mod_lua, "mod.lua at #{mod_dir} returned #{inspect(other)}, expected table"}}
+    {:error,
+     {:invalid_mod_lua, "mod.lua at #{mod_dir} returned #{inspect(other)}, expected table"}}
   end
 
   defp decode_deps(nil), do: []

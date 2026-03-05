@@ -46,9 +46,9 @@ defmodule Lunity.PrefabTest do
     end
   end
 
-  describe "extras_spec/1" do
-    test "returns the extras spec" do
-      spec = Prefab.extras_spec(SimplePrefab)
+  describe "property_spec/1" do
+    test "returns the property spec" do
+      spec = Prefab.property_spec(SimplePrefab)
       assert is_map(spec)
       assert spec.color[:type] == :atom
       assert spec.color[:default] == :grey
@@ -56,7 +56,7 @@ defmodule Lunity.PrefabTest do
     end
 
     test "includes Blender metadata" do
-      spec = Prefab.extras_spec(DoorPrefab)
+      spec = Prefab.property_spec(DoorPrefab)
       angle = spec.open_angle
       assert angle[:subtype] == :angle
       assert angle[:soft_min] == 15.0
@@ -67,7 +67,7 @@ defmodule Lunity.PrefabTest do
     end
 
     test "includes array type with length" do
-      spec = Prefab.extras_spec(DoorPrefab)
+      spec = Prefab.property_spec(DoorPrefab)
       tint = spec.tint
       assert tint[:type] == :float_array
       assert tint[:length] == 4
@@ -75,31 +75,31 @@ defmodule Lunity.PrefabTest do
     end
   end
 
-  describe "validate_extras/2" do
-    test "validates valid extras" do
-      assert :ok = Prefab.validate_extras(SimplePrefab, %{color: :red, shininess: 0.8})
+  describe "validate_properties/2" do
+    test "validates valid properties" do
+      assert :ok = Prefab.validate_properties(SimplePrefab, %{color: :red, shininess: 0.8})
     end
 
     test "validates atom values constraint" do
       assert {:error, [{:color, "must be one of [:grey, :red, :blue]"}]} =
-               Prefab.validate_extras(SimplePrefab, %{color: :green})
+               Prefab.validate_properties(SimplePrefab, %{color: :green})
     end
 
     test "validates float range" do
       assert {:error, [{:shininess, "must be <= 1.0"}]} =
-               Prefab.validate_extras(SimplePrefab, %{shininess: 1.5})
+               Prefab.validate_properties(SimplePrefab, %{shininess: 1.5})
     end
 
     test "validates float_array type" do
-      assert :ok = Prefab.validate_extras(DoorPrefab, %{tint: [1.0, 0.0, 0.0, 1.0]})
+      assert :ok = Prefab.validate_properties(DoorPrefab, %{tint: [1.0, 0.0, 0.0, 1.0]})
 
       assert {:error, [{:tint, "all elements must be numbers"}]} =
-               Prefab.validate_extras(DoorPrefab, %{tint: ["red", 0, 0, 1]})
+               Prefab.validate_properties(DoorPrefab, %{tint: ["red", 0, 0, 1]})
     end
 
     test "validates array length" do
       assert {:error, [{:tint, "array must have 4 elements"}]} =
-               Prefab.validate_extras(DoorPrefab, %{tint: [1.0, 0.0, 0.0]})
+               Prefab.validate_properties(DoorPrefab, %{tint: [1.0, 0.0, 0.0]})
     end
   end
 

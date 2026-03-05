@@ -35,7 +35,7 @@ defmodule Lunity.Scene.DSLTest do
           config: "paddles/default",
           position: {1, 2, 3},
           scale: {4, 5, 6},
-          extras: %{side: :left}
+          properties: %{side: :left}
         )
 
       assert %NodeDef{} = n
@@ -45,7 +45,7 @@ defmodule Lunity.Scene.DSLTest do
       assert n.config == "paddles/default"
       assert n.position == {1, 2, 3}
       assert n.scale == {4, 5, 6}
-      assert n.extras == %{side: :left}
+      assert n.properties == %{side: :left}
     end
 
     test "accepts list format for position and scale" do

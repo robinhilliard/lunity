@@ -286,6 +286,7 @@ defmodule Lunity.PrefabLoader do
       camera: node.camera,
       name: node.name,
       properties: if(node.properties, do: Map.new(node.properties), else: nil),
+      material_uniforms: node.material_uniforms,
       animations: node.animations
     }
 

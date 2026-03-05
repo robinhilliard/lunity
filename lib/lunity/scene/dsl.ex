@@ -22,6 +22,7 @@ defmodule Lunity.Scene.NodeDef do
   - `:entity` - Entity module atom (e.g. `Pong.Paddle`) for ECSx integration
   - `:config` - Config path relative to `priv/config/` for entity defaults
   - `:properties` - Map of per-instance property values (merged with config; instance values win)
+  - `:material` - `%Lunity.Material{}` struct, inline map, or `nil` for per-node material override
   - `:position` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:rotation` - `{x, y, z, w}` quaternion tuple or list
@@ -38,6 +39,7 @@ defmodule Lunity.Scene.NodeDef do
           scene: module() | nil,
           config: String.t() | nil,
           properties: map() | nil,
+          material: Lunity.Material.t() | map() | nil,
           position: vec3() | nil,
           scale: vec3() | nil,
           rotation: quat() | nil,
@@ -51,6 +53,7 @@ defmodule Lunity.Scene.NodeDef do
     :scene,
     :config,
     :properties,
+    :material,
     :position,
     :scale,
     :rotation,
@@ -90,7 +93,7 @@ defmodule Lunity.Scene.DSL do
   defmacro scene(do: block) do
     nodes = extract_nodes(block)
 
-    if __CALLER__.module != nil do
+    if __CALLER__.module != nil and __CALLER__.function == nil do
       quote do
         @lunity_scene_def %Def{nodes: unquote(nodes)}
       end
@@ -111,6 +114,7 @@ defmodule Lunity.Scene.DSL do
   - `:scene` - Scene module atom for sub-scene composition (mutually exclusive with `:prefab`)
   - `:config` - Config path for entity defaults
   - `:properties` - Map of per-instance property values
+  - `:material` - `%Lunity.Material{}` or inline map for per-node material override
   - `:position` - `{x, y, z}` position
   - `:scale` - `{x, y, z}` scale
   - `:rotation` - `{x, y, z, w}` quaternion rotation
@@ -135,6 +139,7 @@ defmodule Lunity.Scene.DSL do
       scene: scene_ref,
       config: opts[:config],
       properties: opts[:properties],
+      material: opts[:material],
       position: position,
       scale: scale,
       rotation: rotation,
