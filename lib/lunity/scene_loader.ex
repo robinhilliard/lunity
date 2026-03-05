@@ -82,12 +82,18 @@ defmodule Lunity.SceneLoader do
           err
 
         nil ->
-          case resolve_config_scene(path, opts) do
+          case resolve_mod_scene(path, opts) do
             {:ok, _scene, _entities} = result ->
               result
 
             nil ->
-              load_scene_from_file(path, opts)
+              case resolve_config_scene(path, opts) do
+                {:ok, _scene, _entities} = result ->
+                  result
+
+                nil ->
+                  load_scene_from_file(path, opts)
+              end
           end
       end
     end
@@ -174,6 +180,18 @@ defmodule Lunity.SceneLoader do
         end
 
       _ ->
+        nil
+    end
+  end
+
+  defp resolve_mod_scene(path, opts) do
+    scene_key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
+
+    case Lunity.Mod.Loader.get_scene(scene_key) do
+      %Def{} = scene_def ->
+        build_from_def(scene_def, opts)
+
+      nil ->
         nil
     end
   end

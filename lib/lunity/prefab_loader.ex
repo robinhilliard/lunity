@@ -72,13 +72,17 @@ defmodule Lunity.PrefabLoader do
   end
 
   def load_prefab(id, opts) when is_binary(id) do
-    with :ok <- validate_prefab_id(id),
-         {:ok, glb_path} <- prefab_glb_path(id, opts),
-         :ok <- ensure_glb_exists(glb_path),
-         {:ok, config} <- load_prefab_config(id, opts),
-         {:ok, shader_program} <- shader_for_opts(opts),
-         {:ok, scene, _gltf, _data_store} <- GLTF.EAGL.load_scene(glb_path, shader_program, opts) do
-      {:ok, scene, config}
+    with :ok <- validate_prefab_id(id) do
+      case resolve_prefab_path(id, opts) do
+        {:ok, glb_path, config} ->
+          with {:ok, shader_program} <- shader_for_opts(opts),
+               {:ok, scene, _gltf, _ds} <- GLTF.EAGL.load_scene(glb_path, shader_program, opts) do
+            {:ok, scene, config}
+          end
+
+        {:error, _} = err ->
+          err
+      end
     end
   end
 
@@ -144,6 +148,39 @@ defmodule Lunity.PrefabLoader do
   # ---------------------------------------------------------------------------
   # Private
   # ---------------------------------------------------------------------------
+
+  defp resolve_prefab_path(id, opts) do
+    case Lunity.Mod.Loader.resolve_prefab_glb(id) do
+      path when is_binary(path) ->
+        if File.exists?(path) do
+          mod_prefab = Lunity.Mod.Loader.get_prefab(id)
+          config = if mod_prefab, do: extract_mod_prefab_defaults(mod_prefab), else: %{}
+          {:ok, path, config}
+        else
+          resolve_standard_prefab_path(id, opts)
+        end
+
+      nil ->
+        resolve_standard_prefab_path(id, opts)
+    end
+  end
+
+  defp resolve_standard_prefab_path(id, opts) do
+    with {:ok, glb_path} <- prefab_glb_path(id, opts),
+         :ok <- ensure_glb_exists(glb_path),
+         {:ok, config} <- load_prefab_config(id, opts) do
+      {:ok, glb_path, config}
+    end
+  end
+
+  defp extract_mod_prefab_defaults(%{properties: props}) when is_map(props) do
+    Map.new(props, fn {k, v} ->
+      default = if is_map(v), do: Map.get(v, "default"), else: nil
+      {k, default}
+    end)
+  end
+
+  defp extract_mod_prefab_defaults(_), do: %{}
 
   defp validate_prefab_id(id) do
     cond do
