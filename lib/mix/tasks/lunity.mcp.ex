@@ -108,6 +108,10 @@ defmodule Mix.Tasks.Lunity.Mcp do
     Application.put_env(:logger, :backends, [])
     Logger.configure(level: :warning)
 
+    # Ensure host app's ebin is on the code path (needed for scene module resolution)
+    app_ebin = Path.join(Mix.Project.app_path(), "ebin")
+    Code.prepend_path(app_ebin)
+
     # Start the host project (e.g. pong) so scene_builders like Pong.SceneBuilder are available
     if app && app != :lunity do
       Application.ensure_all_started(app)

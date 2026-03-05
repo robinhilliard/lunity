@@ -200,7 +200,7 @@ defmodule Lunity.Mod.DataStage do
       entity: resolve_entity_ref(Map.get(props, "entity")),
       scene: resolve_scene_ref(Map.get(props, "scene")),
       config: Map.get(props, "config"),
-      extras: lua_to_extras(Map.get(props, "extras")),
+      properties: lua_to_properties(Map.get(props, "properties")),
       position: lua_to_vec3(Map.get(props, "position")),
       scale: lua_to_vec3(Map.get(props, "scale")),
       rotation: lua_to_quat(Map.get(props, "rotation")),
@@ -284,13 +284,13 @@ defmodule Lunity.Mod.DataStage do
 
   defp lua_to_quat(_), do: nil
 
-  defp lua_to_extras(nil), do: nil
+  defp lua_to_properties(nil), do: nil
 
-  defp lua_to_extras(list) when is_list(list) do
+  defp lua_to_properties(list) when is_list(list) do
     deep_lua_to_elixir(list)
   end
 
-  defp lua_to_extras(_), do: nil
+  defp lua_to_properties(_), do: nil
 
   defp lua_to_property_defs(nil), do: %{}
 

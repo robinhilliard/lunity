@@ -1,6 +1,6 @@
 # Lunity
 
-Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, ECSx integration, file watching for auto-reload, and MCP tooling for agent-driven development.
+Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, ECSx integration, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
 
 ## Project structure
 
@@ -15,11 +15,14 @@ lib/
 priv/
   prefabs/
     *.glb         # Visual assets (referenced by prefab modules)
-  scenes/
-    *.glb         # Blender-authored scenes (alternative to scene modules)
-  config/
-    scenes/       # Config-driven scene .exs files (fallback)
-    prefabs/      # Legacy prefab config .exs files (fallback)
+  mods/
+    base/         # Base game mod (Lua)
+      mod.lua
+      data.lua
+      control.lua
+      assets/
+        prefabs/
+          *.glb
 ```
 
 ## Three DSLs
@@ -37,7 +40,7 @@ defmodule MyGame.Scenes.Level1 do
   scene do
     node :arena,  scene: MyGame.Scenes.Arena, position: {0, 0, 0}
     node :player, prefab: MyGame.Prefabs.Character, entity: MyGame.Player,
-                  position: {0, 0, 1}, extras: %{health: 100}
+                  position: {0, 0, 1}, properties: %{health: 100}
     node :floor,  prefab: MyGame.Prefabs.Box, position: {0, -1, 0}, scale: {10, 0.1, 10}
   end
 end
@@ -47,7 +50,7 @@ Scenes can nest other scenes (Godot-style composition). Sub-scene nodes are graf
 
 ### Entity DSL
 
-Entities define what things do -- game logic, ECSx components, and properties editable in the Lunity editor. Use `use Lunity.Entity`:
+Entities define what things do -- game logic, ECSx components, and properties editable in the Lunity editor. Use `use Lunity.Entity` (optionally with `config: "path"` for default config relative to `priv/config/`):
 
 ```elixir
 defmodule MyGame.Player do
@@ -101,7 +104,7 @@ The `get_blender_extras_script` MCP tool generates Python from prefab schemas to
 - `:entity` - Entity module atom (e.g. `MyGame.Player`)
 - `:scene` - Scene module atom for sub-scene composition (mutually exclusive with `:prefab`)
 - `:config` - Config path for entity defaults (relative to `priv/config/`)
-- `:extras` - Map of per-instance overrides (merged with config; extras win)
+- `:properties` - Map of per-instance property values (merged with config; instance values win)
 - `:position` - `{x, y, z}` tuple or `[x, y, z]` list
 - `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
 - `:rotation` - `{x, y, z, w}` quaternion
@@ -148,7 +151,7 @@ Prefab properties support the full set of Blender custom property metadata:
 
 ```
 prefab module defaults  <-  Blender glTF extras  =  visual config
-entity module defaults  <-  scene extras          =  game config
+entity module defaults  <-  scene properties       =  game config
                                 ↓
                 entity.init(merged_config, entity_id)
 ```
@@ -158,10 +161,131 @@ entity module defaults  <-  scene extras          =  game config
 When `SceneLoader.load_scene` is called with a string path:
 
 1. **Scene builders** - Explicit `{Module, :function}` in `:lunity, :scene_builders` config
-2. **Config file** - `priv/config/scenes/<path>.exs` returning `%Lunity.Scene.Def{}`
-3. **glTF file** - `priv/scenes/<path>.glb`
+2. **Mod data** - Scene definitions from `data:extend()` in Lua mods (see below)
+3. **Scene module** - By convention: path `"pong"` resolves to `{App}.Scenes.Pong`
+4. **Config file** - `priv/config/scenes/<path>.exs` returning `%Lunity.Scene.Def{}`
+5. **glTF file** - `priv/scenes/<path>.glb`
 
 When called with a module atom, the module's `__scene_def__/0` is used directly.
+
+## Lua mod system
+
+Lunity includes a Factorio-style Lua plugin system powered by [luerl](https://github.com/rvirding/luerl). Mods can define scenes, prefabs, and entities via Lua (data stage) and register event handlers for game logic (runtime stage). The mod system is optional -- enable it with `config :lunity, mods_enabled: true`.
+
+### Mod layout
+
+Each mod lives in a subdirectory of `priv/mods/`:
+
+```
+priv/mods/
+  base/
+    mod.lua                # Required: metadata
+    data.lua               # Data stage: define prototypes
+    data-updates.lua       # Optional: patch other mods' data
+    data-final-fixes.lua   # Optional: final adjustments
+    control.lua            # Runtime stage: event handlers
+    assets/
+      prefabs/
+        *.glb              # Mod-specific visual assets
+```
+
+### mod.lua
+
+Every mod must have a `mod.lua` that returns a metadata table:
+
+```lua
+return {
+  name = "base",
+  version = "1.0.0",
+  title = "My Game",
+  dependencies = {}        -- list of mod names this mod depends on
+}
+```
+
+Mods are topologically sorted by dependencies. Circular dependencies are rejected.
+
+### Data stage
+
+A shared Lua state runs each mod's data files in dependency order. Three files are executed per mod (missing files are skipped):
+
+1. `data.lua` -- initial prototype definitions
+2. `data-updates.lua` -- modifications to existing prototypes
+3. `data-final-fixes.lua` -- final adjustments
+
+The `data:extend()` function registers prototypes. Each prototype has a `type` and `name`:
+
+```lua
+data:extend({
+  {
+    type = "scene",
+    name = "arena",
+    nodes = {
+      { name = "floor", prefab = "box", position = {0, -1, 0}, scale = {10, 0.1, 10} },
+      { name = "player", prefab = "character", entity = "player",
+        properties = { health = 100 }, position = {0, 0, 1} },
+    }
+  },
+  {
+    type = "prefab",
+    name = "character",
+    glb = "character",
+    properties = {
+      { name = "tint", type = "float_array", length = 4,
+        default = {1, 1, 1, 1}, subtype = "gamma_color" }
+    }
+  },
+  {
+    type = "entity",
+    name = "player",
+    properties = {
+      { name = "health", type = "integer", default = 100, min = 0 },
+      { name = "speed",  type = "float",   default = 5.0 }
+    },
+    components = { "MyGame.Components.Health", "MyGame.Components.Movement" }
+  }
+})
+```
+
+Scenes defined in mod data are available via string-based `SceneLoader.load_scene/2` (see resolution order above). Prefab GLB files are resolved from the defining mod's `assets/prefabs/` directory.
+
+### Runtime stage
+
+Each mod gets its own isolated, sandboxed Lua state. Unsafe globals (`io`, `os`, `debug`, `load`, `require`, etc.) are stripped. The `lunity.*` API is injected and `control.lua` is executed:
+
+```lua
+lunity.on("on_init", function(event)
+  local player = lunity.entity.find("player")
+  lunity.log("Player entity:", player)
+end)
+```
+
+#### Lua API
+
+| Function | Description |
+|----------|-------------|
+| `lunity.on(event, handler)` | Register an event handler |
+| `lunity.log(...)` | Log a message |
+| `lunity.entity.get(id, property)` | Get entity property value |
+| `lunity.entity.set(id, property, value)` | Set entity property value |
+| `lunity.entity.find(name)` | Find entity by name |
+| `lunity.entity.spawn(name, overrides?)` | Spawn entity instance |
+| `lunity.entity.destroy(id)` | Destroy entity |
+| `lunity.scene.get_node(name)` | Get scene node info |
+| `lunity.scene.set_node_position(name, x, y, z)` | Set node position |
+| `lunity.input.is_key_down(key)` | Check if key is pressed |
+
+Event handlers are dispatched in mod load order. Handler errors are logged but do not stop dispatch to subsequent handlers.
+
+### Resource limits
+
+Lua execution is sandboxed with configurable limits:
+
+```elixir
+config :lunity,
+  mod_instruction_limit: 1_000_000,   # max instructions per script execution
+  mod_handler_timeout: 5_000,         # ms timeout for event handlers
+  mod_max_state_size: 10_000_000      # bytes limit for luerl state
+```
 
 ## File watcher (editor mode)
 
@@ -197,7 +321,7 @@ def deps do
 end
 ```
 
-Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering.
+Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering and [luerl](https://github.com/rvirding/luerl) for the Lua mod system.
 
 ## Coordinate system
 

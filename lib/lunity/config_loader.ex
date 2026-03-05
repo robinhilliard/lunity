@@ -3,9 +3,9 @@ defmodule Lunity.ConfigLoader do
   Load code-behind config files and merge with node properties.
 
   Config files (`.exs`) live under `priv/config/` and support general Elixir code.
-  At load time, config (from file) and properties (from glTF extras / `node.properties`)
-  are merged: config is the base, properties override. Nil values in properties are
-  ignored (do not override config).
+  At load time, config (from file) and instance properties are merged: config is the
+  base, instance properties override. Nil values in properties are ignored (do not
+  override config).
 
   ## Convention
 
@@ -22,7 +22,7 @@ defmodule Lunity.ConfigLoader do
       # Load config from priv/config/scenes/doors/level1_door.exs
       {:ok, config} = Lunity.ConfigLoader.load_config("scenes/doors/level1_door")
 
-      # Merge with node properties (extras override config)
+      # Merge with node properties (instance values override config)
       merged = Lunity.ConfigLoader.merge_config(config, %{"open_angle" => 90})
 
       # Load from another app (e.g. when Lunity is a dependency)
@@ -72,7 +72,7 @@ defmodule Lunity.ConfigLoader do
   end
 
   @doc """
-  Merge config (from .exs file) with properties (from node.properties / glTF extras).
+  Merge config (from .exs file) with instance properties.
 
   Config is the base; properties override. Nil values in properties are ignored
   (do not override config). Both inputs are normalized to atom keys before merging.

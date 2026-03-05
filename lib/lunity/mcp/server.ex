@@ -81,7 +81,7 @@ defmodule Lunity.MCP.Server do
       name("Scene Get Hierarchy")
 
       description(
-        "Returns the scene graph hierarchy of the currently loaded scene. Nodes include name, properties (extras), and children. Returns error if no scene loaded."
+        "Returns the scene graph hierarchy of the currently loaded scene. Nodes include name, properties, and children. Returns error if no scene loaded."
       )
     end
 
@@ -96,7 +96,7 @@ defmodule Lunity.MCP.Server do
       name("Get Blender Extras Script")
 
       description(
-        "Returns a Python script to add Blender custom properties from a prefab's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
+        "Returns a Python script to add Blender custom properties from a prefab's property spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
       )
     end
 

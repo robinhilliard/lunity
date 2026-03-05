@@ -1,6 +1,6 @@
 defmodule Lunity.MCP.BlenderExtras do
   @moduledoc """
-  Generates Python scripts for Blender custom properties from prefab extras specs.
+  Generates Python scripts for Blender custom properties from prefab property specs.
 
   The agent passes the script to Blender MCP's `execute_blender_code` to create
   custom properties on selected object(s) that match the prefab's schema.
@@ -9,7 +9,7 @@ defmodule Lunity.MCP.BlenderExtras do
   """
 
   @doc """
-  Generate a Python script that creates Blender custom properties from a prefab's extras spec.
+  Generate a Python script that creates Blender custom properties from a prefab's property spec.
 
   Accepts a prefab module name string (e.g. `"MyGame.Prefabs.Door"`).
   Returns `{:ok, script}` or `{:error, reason}`.
@@ -17,11 +17,11 @@ defmodule Lunity.MCP.BlenderExtras do
   @spec generate_script(String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate_script(prefab_name) when is_binary(prefab_name) do
     with {:ok, module} <- resolve_module(prefab_name),
-         spec when spec != nil <- Lunity.Properties.extras_spec(module) do
+         spec when spec != nil <- Lunity.Properties.property_spec(module) do
       script = build_script(spec)
       {:ok, script}
     else
-      nil -> {:error, :no_extras_spec}
+      nil -> {:error, :no_property_spec}
       {:error, _} = err -> err
     end
   end
@@ -30,7 +30,7 @@ defmodule Lunity.MCP.BlenderExtras do
     try do
       module = Lunity.Properties.resolve_module(name)
 
-      if function_exported?(module, :__extras_spec__, 0),
+      if function_exported?(module, :__property_spec__, 0),
         do: {:ok, module},
         else: {:error, :not_a_prefab}
     rescue
@@ -40,7 +40,7 @@ defmodule Lunity.MCP.BlenderExtras do
 
   defp build_script(spec) when is_map(spec) do
     header = [
-      "# Add custom properties from Lunity prefab extras spec",
+      "# Add custom properties from Lunity prefab property spec",
       "# Run on selected object(s) in Blender",
       "",
       "import bpy",

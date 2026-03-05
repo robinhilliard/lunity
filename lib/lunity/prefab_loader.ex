@@ -259,7 +259,7 @@ defmodule Lunity.PrefabLoader do
   end
 
   defp prefab_module_defaults(module) do
-    spec = Lunity.Properties.extras_spec(module)
+    spec = Lunity.Properties.property_spec(module)
 
     if spec do
       spec

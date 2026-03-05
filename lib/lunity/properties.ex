@@ -53,7 +53,7 @@ defmodule Lunity.Properties do
   end
 
   @doc false
-  def build_extras_spec(properties) do
+  def build_property_spec(properties) do
     properties
     |> Enum.map(fn {name, type, opts} ->
       {name, Keyword.put(opts, :type, type)}
@@ -66,33 +66,33 @@ defmodule Lunity.Properties do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Returns the extras spec for a module with properties.
+  Returns the property spec for a module with properties.
   """
-  def extras_spec(module) do
-    if function_exported?(module, :__extras_spec__, 0) do
-      module.__extras_spec__()
+  def property_spec(module) do
+    if function_exported?(module, :__property_spec__, 0) do
+      module.__property_spec__()
     else
       nil
     end
   end
 
   @doc """
-  Validates extras against a module's property spec.
+  Validates property values against a module's property spec.
 
   Returns `:ok` or `{:error, reasons}`.
   """
-  def validate_extras(module, extras) when is_map(extras) do
-    spec = extras_spec(module)
-    if spec, do: do_validate_extras(spec, extras), else: :ok
+  def validate_properties(module, properties) when is_map(properties) do
+    spec = property_spec(module)
+    if spec, do: do_validate_properties(spec, properties), else: :ok
   end
 
-  def validate_extras(_module, _extras), do: {:error, :extras_must_be_map}
+  def validate_properties(_module, _properties), do: {:error, :properties_must_be_map}
 
   @doc """
   Builds a struct from merged config using the module's defaults.
   """
   def from_config(module, merged_config) when is_map(merged_config) do
-    spec = extras_spec(module)
+    spec = property_spec(module)
 
     if spec do
       struct(
@@ -111,7 +111,7 @@ defmodule Lunity.Properties do
   end
 
   @doc """
-  Resolves a module name string (from glTF extras) to a module atom.
+  Resolves a module name string to a module atom.
   """
   def resolve_module(name) when is_binary(name) do
     name
@@ -123,10 +123,10 @@ defmodule Lunity.Properties do
   # Validation
   # ---------------------------------------------------------------------------
 
-  defp do_validate_extras(spec, extras) do
+  defp do_validate_properties(spec, properties) do
     errors =
       Enum.flat_map(spec, fn {key, opts} ->
-        value = Map.get(extras, key) || Map.get(extras, to_string(key))
+        value = Map.get(properties, key) || Map.get(properties, to_string(key))
         validate_value(key, value, opts)
       end)
 

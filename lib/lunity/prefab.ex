@@ -10,7 +10,7 @@ defmodule Lunity.Prefab do
   prefab module that:
   - Links to a `.glb` file via the `:glb` option
   - Declares typed properties (for validation and Blender custom property generation)
-  - Generates a struct with defaults and an extras spec for introspection
+  - Generates a struct with defaults and a property spec for introspection
 
   ## Example
 
@@ -77,13 +77,13 @@ defmodule Lunity.Prefab do
     glb_id = Module.get_attribute(env.module, :lunity_glb_id)
 
     struct_fields = Lunity.Properties.build_struct_fields(properties)
-    extras_spec = Lunity.Properties.build_extras_spec(properties)
+    property_spec = Lunity.Properties.build_property_spec(properties)
 
     quote do
       defstruct unquote(struct_fields)
 
       @doc false
-      def __extras_spec__, do: unquote(Macro.escape(extras_spec))
+      def __property_spec__, do: unquote(Macro.escape(property_spec))
 
       @doc false
       def __glb_id__, do: unquote(glb_id)
@@ -91,8 +91,8 @@ defmodule Lunity.Prefab do
   end
 
   # Delegate introspection and validation to Properties
-  defdelegate extras_spec(module), to: Lunity.Properties
-  defdelegate validate_extras(module, extras), to: Lunity.Properties
+  defdelegate property_spec(module), to: Lunity.Properties
+  defdelegate validate_properties(module, properties), to: Lunity.Properties
   defdelegate from_config(module, merged_config), to: Lunity.Properties
   defdelegate resolve_module(name), to: Lunity.Properties
 

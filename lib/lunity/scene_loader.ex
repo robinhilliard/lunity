@@ -7,16 +7,16 @@ defmodule Lunity.SceneLoader do
 
   ## Prefab load order
 
-  For nodes with `extras["prefab"]`:
-  1. Instantiate prefab (merge placeholder extras as overrides)
+  For nodes with `properties["prefab"]`:
+  1. Instantiate prefab (merge placeholder properties as overrides)
   2. Replace placeholder with prefab root at placeholder's transform
   3. Run entity init on prefab root with merged config
 
   ## Entity nodes
 
-  For nodes with `extras["entity"]`:
+  For nodes with `properties["entity"]`:
   1. Create entity (generate ID)
-  2. Load config from `extras["config"]`, merge with extras
+  2. Load config from `properties["config"]`, merge with properties
   3. Call `entity_module.init(merged_config, entity_id)`
   4. Store entity_id in `node.properties["entity_id"]`
 
@@ -37,8 +37,10 @@ defmodule Lunity.SceneLoader do
 
   Resolution order:
   1. Scene builders (explicit `{Module, :function}` in `:lunity, :scene_builders` config)
-  2. Config file at `priv/config/scenes/<path>.exs` returning `%Lunity.Scene.Def{}`
-  3. `.glb` file at `priv/scenes/<path>.glb`
+  2. Mod data (scene definitions from `data:extend()` in Lua mods)
+  3. Scene module by convention (`{App}.Scenes.{CamelizedPath}`)
+  4. Config file at `priv/config/scenes/<path>.exs` returning `%Lunity.Scene.Def{}`
+  5. `.glb` file at `priv/scenes/<path>.glb`
 
   ## Options
 
@@ -87,12 +89,18 @@ defmodule Lunity.SceneLoader do
               result
 
             nil ->
-              case resolve_config_scene(path, opts) do
+              case resolve_scene_module_by_path(path, opts) do
                 {:ok, _scene, _entities} = result ->
                   result
 
                 nil ->
-                  load_scene_from_file(path, opts)
+                  case resolve_config_scene(path, opts) do
+                    {:ok, _scene, _entities} = result ->
+                      result
+
+                    nil ->
+                      load_scene_from_file(path, opts)
+                  end
               end
           end
       end
@@ -196,6 +204,28 @@ defmodule Lunity.SceneLoader do
     end
   end
 
+  defp resolve_scene_module_by_path(path, opts) do
+    scene_key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
+    app = current_app()
+    app_prefix = app |> to_string() |> Macro.camelize()
+
+    module_parts =
+      scene_key
+      |> String.split("/")
+      |> Enum.map(&Macro.camelize/1)
+      |> Enum.map(&String.to_atom/1)
+
+    module = Module.concat([String.to_atom(app_prefix), :Scenes] ++ module_parts)
+
+    case resolve_scene_module(module) do
+      {:ok, %Def{} = scene_def} ->
+        build_from_def(scene_def, opts)
+
+      _ ->
+        nil
+    end
+  end
+
   defp resolve_config_scene(path, opts) do
     config_key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
     config_path = "scenes/#{config_key}"
@@ -237,7 +267,7 @@ defmodule Lunity.SceneLoader do
         node_def.prefab ->
           case PrefabLoader.load_prefab(node_def.prefab, opts) do
             {:ok, prefab_scene, prefab_config} ->
-              overrides = node_def.extras || %{}
+              overrides = node_def.properties || %{}
 
               {:ok, updated_parent, _merged} =
                 PrefabLoader.instantiate_prefab_from_loaded(
@@ -281,7 +311,7 @@ defmodule Lunity.SceneLoader do
 
           {child, entity_entities} =
             if node_def.entity do
-              config = node_def.extras || %{}
+              config = node_def.properties || %{}
 
               case init_entity_from_def(node_def, config) do
                 {:ok, entity_id} ->
@@ -330,7 +360,7 @@ defmodule Lunity.SceneLoader do
     entity_id = generate_entity_id()
 
     struct_config =
-      if function_exported?(entity_module, :__extras_spec__, 0) do
+      if function_exported?(entity_module, :__property_spec__, 0) do
         Entity.from_config(
           entity_module,
           if(is_list(full_config), do: Map.new(full_config), else: full_config)
@@ -627,8 +657,8 @@ defmodule Lunity.SceneLoader do
 
   defp check_property_conflicts(%NodeDef{prefab: prefab, entity: entity})
        when is_atom(prefab) and prefab != nil and is_atom(entity) and entity != nil do
-    prefab_spec = Lunity.Properties.extras_spec(prefab)
-    entity_spec = Lunity.Properties.extras_spec(entity)
+    prefab_spec = Lunity.Properties.property_spec(prefab)
+    entity_spec = Lunity.Properties.property_spec(entity)
 
     if prefab_spec && entity_spec do
       prefab_keys = Map.keys(prefab_spec) |> MapSet.new()

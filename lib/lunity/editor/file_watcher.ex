@@ -1,16 +1,19 @@
 defmodule Lunity.Editor.FileWatcher do
   @moduledoc """
-  Watches `priv/` directories for changes and triggers scene reload in the editor.
+  Watches project files for changes and triggers scene reload in the editor.
 
-  Monitors `priv/config/`, `priv/scenes/`, and `priv/prefabs/` for file changes.
-  When a change is detected, queues a reload of the current scene via Editor.State,
-  preserving the current camera position.
+  Monitors two kinds of source files:
 
-  Tracks the last known scene path independently so that recovery works after
-  load errors (e.g. syntax errors in .exs files that clear the scene).
+  - **priv/** assets: `priv/config/`, `priv/scenes/`, `priv/prefabs/` for `.exs`
+    config scripts and `.glb` assets. Changes trigger an immediate scene reload.
+
+  - **lib/** modules: Scene, Entity, and Prefab `.ex` files. Changes trigger
+    recompilation via `Code.compile_file/1` to hot-load the new module, then
+    a scene reload so the editor reflects the updated definition.
 
   Debounces rapid changes (editors often write multiple times in quick succession)
-  with a 300ms window.
+  with a 300ms window. Tracks the last known scene path independently so that
+  recovery works after load errors (e.g. syntax errors that clear the scene).
   """
   use GenServer
   require Logger
@@ -26,19 +29,23 @@ defmodule Lunity.Editor.FileWatcher do
   @impl true
   def init(opts) do
     priv_dir = resolve_priv_dir(opts)
+    lib_dir = resolve_lib_dir(opts)
 
-    dirs =
+    priv_dirs =
       ["config", "scenes", "prefabs"]
       |> Enum.map(&Path.join(priv_dir, &1))
       |> Enum.filter(&File.dir?/1)
 
+    lib_dirs = if lib_dir && File.dir?(lib_dir), do: [lib_dir], else: []
+    dirs = priv_dirs ++ lib_dirs
+
     if dirs == [] do
-      {:ok, %{watcher: nil, debounce_ref: nil, last_scene_path: nil}}
+      {:ok, initial_state()}
     else
       case FileSystem.start_link(dirs: dirs) do
         {:ok, watcher_pid} ->
           FileSystem.subscribe(watcher_pid)
-          {:ok, %{watcher: watcher_pid, debounce_ref: nil, last_scene_path: nil}}
+          {:ok, %{initial_state() | watcher: watcher_pid}}
 
         other ->
           Logger.warning(
@@ -46,13 +53,20 @@ defmodule Lunity.Editor.FileWatcher do
               "Auto-reload disabled. On Linux, install inotify-tools: sudo apt install inotify-tools"
           )
 
-          {:ok, %{watcher: nil, debounce_ref: nil, last_scene_path: nil}}
+          {:ok, initial_state()}
       end
     end
   end
 
   @impl true
-  def handle_info({:file_event, _watcher, {_path, _events}}, state) do
+  def handle_info({:file_event, _watcher, {path, _events}}, state) do
+    state =
+      if String.ends_with?(path, ".ex") do
+        %{state | pending_recompiles: MapSet.put(state.pending_recompiles, path)}
+      else
+        state
+      end
+
     state = schedule_reload(state)
     {:noreply, state}
   end
@@ -62,18 +76,43 @@ defmodule Lunity.Editor.FileWatcher do
   end
 
   def handle_info(:do_reload, state) do
+    recompile_pending(state.pending_recompiles)
     state = reload_current_scene(state)
-    {:noreply, %{state | debounce_ref: nil}}
+    {:noreply, %{state | debounce_ref: nil, pending_recompiles: MapSet.new()}}
   end
 
   # ---------------------------------------------------------------------------
   # Private
   # ---------------------------------------------------------------------------
 
+  defp initial_state do
+    %{watcher: nil, debounce_ref: nil, last_scene_path: nil, pending_recompiles: MapSet.new()}
+  end
+
   defp schedule_reload(%{debounce_ref: ref} = state) do
     if ref, do: Process.cancel_timer(ref)
     new_ref = Process.send_after(self(), :do_reload, @debounce_ms)
     %{state | debounce_ref: new_ref}
+  end
+
+  defp recompile_pending(files) do
+    if MapSet.size(files) > 0 do
+      prev = Code.compiler_options(ignore_module_conflict: true)
+
+      Enum.each(files, fn path ->
+        try do
+          Code.compile_file(path)
+          Logger.info("FileWatcher: recompiled #{Path.relative_to_cwd(path)}")
+        rescue
+          e ->
+            Logger.warning(
+              "FileWatcher: compile error in #{Path.relative_to_cwd(path)}: #{Exception.message(e)}"
+            )
+        end
+      end)
+
+      Code.compiler_options(ignore_module_conflict: prev[:ignore_module_conflict] || false)
+    end
   end
 
   defp reload_current_scene(state) do
@@ -116,6 +155,27 @@ defmodule Lunity.Editor.FileWatcher do
             app = Lunity.project_app()
             Lunity.priv_dir_for_app(app)
         end
+    end
+  end
+
+  defp resolve_lib_dir(opts) do
+    cond do
+      dir = opts[:lib_dir] ->
+        dir
+
+      true ->
+        project_root = resolve_project_root()
+        if project_root, do: Path.join(project_root, "lib")
+    end
+  end
+
+  defp resolve_project_root do
+    case State.get_project_context() do
+      {cwd, _} when is_binary(cwd) -> cwd
+      _ -> Application.get_env(:lunity, :project_priv) |> then(fn
+        nil -> case File.cwd() do {:ok, cwd} -> cwd; _ -> nil end
+        priv -> Path.dirname(priv)
+      end)
     end
   end
 end

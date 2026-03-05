@@ -21,7 +21,7 @@ defmodule Lunity.Scene.NodeDef do
   - `:prefab` - Prefab ID to load (e.g. `"box"`)
   - `:entity` - Entity module atom (e.g. `Pong.Paddle`) for ECSx integration
   - `:config` - Config path relative to `priv/config/` for entity defaults
-  - `:extras` - Map of per-instance overrides (merged with config, extras win)
+  - `:properties` - Map of per-instance property values (merged with config; instance values win)
   - `:position` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:rotation` - `{x, y, z, w}` quaternion tuple or list
@@ -37,7 +37,7 @@ defmodule Lunity.Scene.NodeDef do
           entity: module() | nil,
           scene: module() | nil,
           config: String.t() | nil,
-          extras: map() | nil,
+          properties: map() | nil,
           position: vec3() | nil,
           scale: vec3() | nil,
           rotation: quat() | nil,
@@ -50,7 +50,7 @@ defmodule Lunity.Scene.NodeDef do
     :entity,
     :scene,
     :config,
-    :extras,
+    :properties,
     :position,
     :scale,
     :rotation,
@@ -70,7 +70,7 @@ defmodule Lunity.Scene.DSL do
         node :floor,        prefab: "box", position: {0, 0, -1}, scale: {12, 6, 0.3}
         node :paddle_left,  prefab: "box", entity: Pong.Paddle,
                             position: {-18, 0, 0.5}, scale: {0.3, 1.5, 0.3},
-                            extras: %{side: :left}
+                            properties: %{side: :left}
         node :ball,         prefab: "box", entity: Pong.Ball,
                             position: {0, 0, 0.5}, scale: {0.4, 0.4, 0.4}
       end
@@ -89,13 +89,8 @@ defmodule Lunity.Scene.DSL do
   """
   defmacro scene(do: block) do
     nodes = extract_nodes(block)
-    caller = __CALLER__
 
-    has_scene_attr? =
-      caller.module != nil and
-        Module.has_attribute?(caller.module, :lunity_scene_def)
-
-    if has_scene_attr? do
+    if __CALLER__.module != nil do
       quote do
         @lunity_scene_def %Def{nodes: unquote(nodes)}
       end
@@ -115,7 +110,7 @@ defmodule Lunity.Scene.DSL do
   - `:entity` - Entity module atom (e.g. `Pong.Paddle`)
   - `:scene` - Scene module atom for sub-scene composition (mutually exclusive with `:prefab`)
   - `:config` - Config path for entity defaults
-  - `:extras` - Map of per-instance overrides
+  - `:properties` - Map of per-instance property values
   - `:position` - `{x, y, z}` position
   - `:scale` - `{x, y, z}` scale
   - `:rotation` - `{x, y, z, w}` quaternion rotation
@@ -139,7 +134,7 @@ defmodule Lunity.Scene.DSL do
       entity: opts[:entity],
       scene: scene_ref,
       config: opts[:config],
-      extras: opts[:extras],
+      properties: opts[:properties],
       position: position,
       scale: scale,
       rotation: rotation,
