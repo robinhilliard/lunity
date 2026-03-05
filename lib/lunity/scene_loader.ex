@@ -284,6 +284,7 @@ defmodule Lunity.SceneLoader do
                 |> apply_transform(node_def)
                 |> Map.put(:name, to_string(node_def.name))
                 |> maybe_apply_material(node_def)
+                |> maybe_apply_light(node_def)
 
               {child, entity_entities} =
                 if node_def.entity do
@@ -312,6 +313,7 @@ defmodule Lunity.SceneLoader do
             Node.new(name: to_string(node_def.name))
             |> apply_transform(node_def)
             |> maybe_apply_material(node_def)
+            |> maybe_apply_light(node_def)
 
           {child, entity_entities} =
             if node_def.entity do
@@ -368,6 +370,18 @@ defmodule Lunity.SceneLoader do
       end)
 
     %{node | children: updated_children}
+  end
+
+  defp maybe_apply_light(node, %NodeDef{light: nil}), do: node
+
+  defp maybe_apply_light(node, %NodeDef{light: light}) do
+    light_struct =
+      case light do
+        %Lunity.Light{} -> light
+        map when is_map(map) -> Lunity.Light.from_map(map)
+      end
+
+    %{node | light: Lunity.Light.to_eagl_light(light_struct)}
   end
 
   defp init_entity_from_def(%NodeDef{entity: entity_module}, merged_config)

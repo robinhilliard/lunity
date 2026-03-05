@@ -202,6 +202,7 @@ defmodule Lunity.Mod.DataStage do
       config: Map.get(props, "config"),
       properties: lua_to_properties(Map.get(props, "properties")),
       material: lua_to_material(Map.get(props, "material")),
+      light: lua_to_light(Map.get(props, "light")),
       position: lua_to_vec3(Map.get(props, "position")),
       scale: lua_to_vec3(Map.get(props, "scale")),
       rotation: lua_to_quat(Map.get(props, "rotation")),
@@ -301,6 +302,15 @@ defmodule Lunity.Mod.DataStage do
   end
 
   defp lua_to_material(_), do: nil
+
+  defp lua_to_light(nil), do: nil
+
+  defp lua_to_light(list) when is_list(list) do
+    map = deep_lua_to_elixir(list)
+    if is_map(map), do: Lunity.Light.from_map(map), else: nil
+  end
+
+  defp lua_to_light(_), do: nil
 
   defp lua_to_property_defs(nil), do: %{}
 

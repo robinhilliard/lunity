@@ -35,7 +35,7 @@ defmodule Lunity.Scene do
 
   defmacro __using__(_opts) do
     quote do
-      import Lunity.Scene.DSL, only: [scene: 1, node: 1, node: 2]
+      import Lunity.Scene.DSL, only: [scene: 1, node: 1, node: 2, light: 1, light: 2]
       Module.register_attribute(__MODULE__, :lunity_scene_def, [])
       @before_compile Lunity.Scene
     end

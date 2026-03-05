@@ -23,6 +23,7 @@ defmodule Lunity.Scene.NodeDef do
   - `:config` - Config path relative to `priv/config/` for entity defaults
   - `:properties` - Map of per-instance property values (merged with config; instance values win)
   - `:material` - `%Lunity.Material{}` struct, inline map, or `nil` for per-node material override
+  - `:light` - `%Lunity.Light{}` struct, inline map, or `nil` to make this node a light emitter
   - `:position` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:rotation` - `{x, y, z, w}` quaternion tuple or list
@@ -40,6 +41,7 @@ defmodule Lunity.Scene.NodeDef do
           config: String.t() | nil,
           properties: map() | nil,
           material: Lunity.Material.t() | map() | nil,
+          light: Lunity.Light.t() | map() | nil,
           position: vec3() | nil,
           scale: vec3() | nil,
           rotation: quat() | nil,
@@ -54,6 +56,7 @@ defmodule Lunity.Scene.NodeDef do
     :config,
     :properties,
     :material,
+    :light,
     :position,
     :scale,
     :rotation,
@@ -115,6 +118,7 @@ defmodule Lunity.Scene.DSL do
   - `:config` - Config path for entity defaults
   - `:properties` - Map of per-instance property values
   - `:material` - `%Lunity.Material{}` or inline map for per-node material override
+  - `:light` - `%Lunity.Light{}` or inline map to make this node a light emitter
   - `:position` - `{x, y, z}` position
   - `:scale` - `{x, y, z}` scale
   - `:rotation` - `{x, y, z, w}` quaternion rotation
@@ -140,11 +144,32 @@ defmodule Lunity.Scene.DSL do
       config: opts[:config],
       properties: opts[:properties],
       material: opts[:material],
+      light: opts[:light],
       position: position,
       scale: scale,
       rotation: rotation,
       children: opts[:children] || []
     }
+  end
+
+  @light_keys [:type, :color, :intensity, :range, :inner_cone_angle, :outer_cone_angle]
+
+  @doc """
+  Convenience macro for declaring a light node.
+
+  Light-specific options (`:type`, `:color`, `:intensity`, `:range`,
+  `:inner_cone_angle`, `:outer_cone_angle`) are extracted into a
+  `%Lunity.Light{}` struct. Remaining options (`:position`, `:rotation`,
+  `:scale`, `:entity`, etc.) are forwarded to `node/2`.
+
+      scene do
+        light :sun, type: :directional, color: {1.0, 0.95, 0.8}, intensity: 2.0,
+          rotation: {-0.38, 0.0, 0.0, 0.92}
+      end
+  """
+  def light(name, opts \\ []) when is_atom(name) do
+    {light_opts, node_opts} = Keyword.split(opts, @light_keys)
+    node(name, [{:light, Lunity.Light.new(light_opts)} | node_opts])
   end
 
   # ---------------------------------------------------------------------------
@@ -159,13 +184,9 @@ defmodule Lunity.Scene.DSL do
     [wrap_node_call(single_statement)]
   end
 
-  defp wrap_node_call({:node, meta, args}) do
-    {:node, meta, args}
-  end
-
-  defp wrap_node_call(other) do
-    other
-  end
+  defp wrap_node_call({:node, meta, args}), do: {:node, meta, args}
+  defp wrap_node_call({:light, meta, args}), do: {:light, meta, args}
+  defp wrap_node_call(other), do: other
 
   defp validate_vec3(nil, _field), do: nil
 

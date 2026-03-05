@@ -262,7 +262,8 @@ defmodule Lunity.Editor.View do
     proj = EAGL.OrbitCamera.get_projection_matrix(orbit, w / max(h, 1))
 
     GLTF.EAGL.set_pbr_uniforms(prog,
-      view_pos: EAGL.OrbitCamera.get_position(orbit)
+      view_pos: EAGL.OrbitCamera.get_position(orbit),
+      skip_lights: true
     )
 
     case State.get_scene() do
