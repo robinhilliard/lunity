@@ -110,7 +110,6 @@ A node can have:
 - Just `prefab:` -- static visual, no game logic (scenery)
 - Both `prefab:` and `entity:` -- interactive game object (the common case)
 - Just `scene:` -- sub-scene composition
-- None of the above -- empty grouping node (parent for children)
 
 ## Property separation
 
