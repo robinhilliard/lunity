@@ -1,21 +1,23 @@
 defmodule Lunity.MCP.BlenderExtras do
   @moduledoc """
-  Generates Python scripts for Blender custom properties from entity extras specs.
+  Generates Python scripts for Blender custom properties from prefab extras specs.
 
   The agent passes the script to Blender MCP's `execute_blender_code` to create
-  custom properties on selected object(s) that match the entity's schema.
+  custom properties on selected object(s) that match the prefab's schema.
+  Supports all Blender custom property metadata: min/max, soft limits, step,
+  precision, subtype, and description.
   """
-  alias Lunity.Entity
 
   @doc """
-  Generate a Python script that creates Blender custom properties from an entity's extras spec.
+  Generate a Python script that creates Blender custom properties from a prefab's extras spec.
 
+  Accepts a prefab module name string (e.g. `"MyGame.Prefabs.Door"`).
   Returns `{:ok, script}` or `{:error, reason}`.
   """
   @spec generate_script(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def generate_script(entity_name) when is_binary(entity_name) do
-    with {:ok, module} <- resolve_module(entity_name),
-         spec when spec != nil <- Entity.extras_spec(module) do
+  def generate_script(prefab_name) when is_binary(prefab_name) do
+    with {:ok, module} <- resolve_module(prefab_name),
+         spec when spec != nil <- Lunity.Properties.extras_spec(module) do
       script = build_script(spec)
       {:ok, script}
     else
@@ -26,82 +28,170 @@ defmodule Lunity.MCP.BlenderExtras do
 
   defp resolve_module(name) do
     try do
-      module = Entity.resolve_module(name)
+      module = Lunity.Properties.resolve_module(name)
 
       if function_exported?(module, :__extras_spec__, 0),
         do: {:ok, module},
-        else: {:error, :not_an_entity}
+        else: {:error, :not_a_prefab}
     rescue
-      _ -> {:error, {:entity_not_found, name}}
+      _ -> {:error, {:prefab_not_found, name}}
     end
   end
 
   defp build_script(spec) when is_map(spec) do
-    lines = [
-      "# Add custom properties from Lunity entity extras spec",
+    header = [
+      "# Add custom properties from Lunity prefab extras spec",
       "# Run on selected object(s) in Blender",
       "",
       "import bpy",
       "",
-      "def add_property(obj, name, value, prop_type, min_val=None, max_val=None):",
-      "    if name in obj:",
-      "        return",
+      "def set_property(obj, name, value, **ui_opts):",
+      "    \"\"\"Add or update a custom property with full UI metadata.\"\"\"",
       "    obj[name] = value",
       "    ui = obj.id_properties_ui(name)",
-      "    if prop_type == 'int' and min_val is not None:",
-      "        ui.update(min=min_val)",
-      "    if prop_type == 'int' and max_val is not None:",
-      "        ui.update(max=max_val)",
-      "    if prop_type == 'float' and min_val is not None:",
-      "        ui.update(min=min_val)",
-      "    if prop_type == 'float' and max_val is not None:",
-      "        ui.update(max=max_val)",
+      "    update_args = {}",
+      "    for key in ['min', 'max', 'soft_min', 'soft_max', 'step', 'precision',",
+      "                'subtype', 'description', 'default']:",
+      "        if key in ui_opts and ui_opts[key] is not None:",
+      "            update_args[key] = ui_opts[key]",
+      "    if update_args:",
+      "        ui.update(**update_args)",
       "",
       "for obj in bpy.context.selected_objects:",
       "    if not hasattr(obj, 'id_properties_ui'):",
       "        continue"
     ]
 
-    prop_lines =
-      Enum.flat_map(spec, fn {key, opts} ->
-        {py_name, py_value, py_type, min_val, max_val} = spec_to_python(key, opts)
+    prop_lines = Enum.flat_map(spec, fn {key, opts} -> property_lines(key, opts) end)
 
-        [
-          "    add_property(obj, #{inspect(py_name)}, #{py_value}, #{inspect(py_type)}, #{min_val}, #{max_val})"
-        ]
-      end)
-
-    (lines ++ prop_lines) |> Enum.join("\n")
+    (header ++ prop_lines) |> Enum.join("\n")
   end
 
-  defp spec_to_python(key, opts) do
+  defp property_lines(key, opts) do
     name = to_string(key)
-    default = Keyword.get(opts, :default)
     type = Keyword.get(opts, :type, :string)
-    min_val = Keyword.get(opts, :min)
-    max_val = Keyword.get(opts, :max)
+    default = Keyword.get(opts, :default)
 
-    {py_value, py_type} =
-      case type do
-        :string ->
-          val = if is_binary(default), do: default, else: ""
-          {"#{inspect(val)}", "str"}
+    {py_value, ui_args} = type_to_python(type, default, opts)
+    ui_str = format_ui_args(ui_args)
 
-        :integer ->
-          val = if is_integer(default), do: default, else: 0
-          {"#{val}", "int"}
-
-        :float ->
-          val = if is_number(default), do: default, else: 0.0
-          {"#{val}", "float"}
-
-        _ ->
-          {"\"\"", "str"}
-      end
-
-    min_str = if min_val != nil, do: "#{min_val}", else: "None"
-    max_str = if max_val != nil, do: "#{max_val}", else: "None"
-
-    {name, py_value, py_type, min_str, max_str}
+    ["    set_property(obj, #{inspect(name)}, #{py_value}#{ui_str})"]
   end
+
+  defp type_to_python(:string, default, opts) do
+    val = if is_binary(default), do: inspect(default), else: "\"\""
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:integer, default, opts) do
+    val = if is_integer(default), do: "#{default}", else: "0"
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:float, default, opts) do
+    val = if is_number(default), do: format_float(default), else: "0.0"
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:boolean, default, opts) do
+    val = if default, do: "True", else: "False"
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:atom, default, opts) do
+    val = if default, do: inspect(to_string(default)), else: "\"\""
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:float_array, default, opts) do
+    val =
+      if is_list(default),
+        do: "[#{Enum.map_join(default, ", ", &format_float/1)}]",
+        else: "[0.0]"
+
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:integer_array, default, opts) do
+    val =
+      if is_list(default),
+        do: "[#{Enum.join(default, ", ")}]",
+        else: "[0]"
+
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(:boolean_array, default, opts) do
+    val =
+      if is_list(default),
+        do: "[#{Enum.map_join(default, ", ", fn b -> if b, do: "True", else: "False" end)}]",
+        else: "[False]"
+
+    {val, base_ui_args(opts)}
+  end
+
+  defp type_to_python(_type, _default, opts) do
+    {"\"\"", base_ui_args(opts)}
+  end
+
+  defp base_ui_args(opts) do
+    []
+    |> maybe_add(:min, opts[:min])
+    |> maybe_add(:max, opts[:max])
+    |> maybe_add(:soft_min, opts[:soft_min])
+    |> maybe_add(:soft_max, opts[:soft_max])
+    |> maybe_add(:step, opts[:step])
+    |> maybe_add(:precision, opts[:precision])
+    |> maybe_add_string(:subtype, blender_subtype(opts[:subtype]))
+    |> maybe_add_string(:description, opts[:description])
+    |> maybe_add_default(opts)
+  end
+
+  defp maybe_add(args, _key, nil), do: args
+  defp maybe_add(args, key, val), do: [{key, "#{val}"} | args]
+
+  defp maybe_add_string(args, _key, nil), do: args
+  defp maybe_add_string(args, key, val), do: [{key, inspect(val)} | args]
+
+  defp maybe_add_default(args, opts) do
+    default = opts[:default]
+
+    case opts[:type] do
+      t when t in [:float, :integer] and not is_nil(default) ->
+        [{:default, "#{default}"} | args]
+
+      _ ->
+        args
+    end
+  end
+
+  defp blender_subtype(nil), do: nil
+  defp blender_subtype(:plain), do: nil
+  defp blender_subtype(:pixel), do: "PIXEL"
+  defp blender_subtype(:percentage), do: "PERCENTAGE"
+  defp blender_subtype(:factor), do: "FACTOR"
+  defp blender_subtype(:angle), do: "ANGLE"
+  defp blender_subtype(:time), do: "TIME"
+  defp blender_subtype(:distance), do: "DISTANCE"
+  defp blender_subtype(:power), do: "POWER"
+  defp blender_subtype(:temperature), do: "TEMPERATURE"
+  defp blender_subtype(:linear_color), do: "COLOR"
+  defp blender_subtype(:gamma_color), do: "COLOR_GAMMA"
+  defp blender_subtype(:euler), do: "EULER"
+  defp blender_subtype(:quaternion), do: "QUATERNION"
+  defp blender_subtype(_), do: nil
+
+  defp format_ui_args([]), do: ""
+
+  defp format_ui_args(args) do
+    parts =
+      args
+      |> Enum.reverse()
+      |> Enum.map_join(", ", fn {k, v} -> "#{k}=#{v}" end)
+
+    ", #{parts}"
+  end
+
+  defp format_float(val) when is_float(val), do: "#{val}"
+  defp format_float(val) when is_integer(val), do: "#{val}.0"
 end

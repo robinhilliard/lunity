@@ -34,10 +34,11 @@ defmodule Lunity.PrefabLoader do
   alias Lunity.ConfigLoader
 
   @doc """
-  Load a prefab by id.
+  Load a prefab by module or string ID.
 
-  Loads glTF from `priv/prefabs/<id>.glb` and config from
-  `priv/config/prefabs/<id>.exs`. Config is optional; missing config uses `%{}`.
+  Accepts either a prefab module (e.g. `MyGame.Prefabs.Door`) or a string ID
+  (e.g. `"door"`). When a module is provided, the GLB path comes from
+  `__glb_id__/0` and config defaults from the module's struct.
 
   ## Options
 
@@ -47,18 +48,30 @@ defmodule Lunity.PrefabLoader do
   ## Returns
 
   - `{:ok, scene, config}` - EAGL.Scene and config map
-  - `{:error, :path_traversal}` - Invalid id (contains `..` or absolute path)
-  - `{:error, :file_not_found}` - glTF file does not exist
-  - `{:error, reason}` - Other load error (e.g. from GLTF.EAGL.load_scene)
-
-  ## Examples
-
-      {:ok, scene, config} = Lunity.PrefabLoader.load_prefab("crate")
-      {:ok, scene, config} = Lunity.PrefabLoader.load_prefab("props/crate", app: :my_game)
+  - `{:error, reason}` - Load error
   """
-  @spec load_prefab(String.t(), keyword()) ::
+  @spec load_prefab(module() | String.t(), keyword()) ::
           {:ok, Scene.t(), map()} | {:error, term()}
-  def load_prefab(id, opts \\ []) do
+  def load_prefab(id_or_module, opts \\ [])
+
+  def load_prefab(module, opts) when is_atom(module) do
+    case resolve_prefab_module(module) do
+      {:ok, glb_id} ->
+        with :ok <- validate_prefab_id(glb_id),
+             {:ok, glb_path} <- prefab_glb_path(glb_id, opts),
+             :ok <- ensure_glb_exists(glb_path),
+             {:ok, shader_program} <- shader_for_opts(opts),
+             {:ok, scene, _gltf, _ds} <- GLTF.EAGL.load_scene(glb_path, shader_program, opts) do
+          config = prefab_module_defaults(module)
+          {:ok, scene, config}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  def load_prefab(id, opts) when is_binary(id) do
     with :ok <- validate_prefab_id(id),
          {:ok, glb_path} <- prefab_glb_path(id, opts),
          :ok <- ensure_glb_exists(glb_path),
@@ -192,6 +205,32 @@ defmodule Lunity.PrefabLoader do
 
   defp current_app do
     Lunity.project_app()
+  end
+
+  defp resolve_prefab_module(module) when is_atom(module) do
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        if function_exported?(module, :__glb_id__, 0) do
+          {:ok, module.__glb_id__()}
+        else
+          {:error, {:not_a_prefab, module}}
+        end
+
+      {:error, _} ->
+        {:error, {:module_not_found, module}}
+    end
+  end
+
+  defp prefab_module_defaults(module) do
+    spec = Lunity.Properties.extras_spec(module)
+
+    if spec do
+      spec
+      |> Enum.map(fn {key, opts} -> {key, opts[:default]} end)
+      |> Map.new()
+    else
+      %{}
+    end
   end
 
   # Clone node structure; share mesh, camera, animations (references).

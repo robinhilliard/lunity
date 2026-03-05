@@ -50,9 +50,25 @@ defmodule Lunity.SceneLoader do
   - `{:ok, scene, entities}` - Scene with entities created; entities is [{node, entity_id}, ...]
   - `{:error, reason}` - Load error
   """
-  @spec load_scene(String.t(), keyword()) ::
+  @spec load_scene(module() | String.t(), keyword()) ::
           {:ok, Scene.t(), [{Node.t(), term()}]} | {:error, term()}
-  def load_scene(path, opts \\ []) do
+  def load_scene(path_or_module, opts \\ [])
+
+  def load_scene(module, opts) when is_atom(module) do
+    if cwd = opts[:project_cwd] do
+      Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
+    end
+
+    case resolve_scene_module(module) do
+      {:ok, %Def{} = scene_def} ->
+        build_from_def(scene_def, opts)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  def load_scene(path, opts) when is_binary(path) do
     if cwd = opts[:project_cwd] do
       Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
     end
@@ -193,68 +209,75 @@ defmodule Lunity.SceneLoader do
   end
 
   defp build_node_from_def(%NodeDef{} = node_def, parent, opts) do
+    check_property_conflicts(node_def)
+
     {parent, child_node, entities} =
-      if node_def.prefab do
-        case PrefabLoader.load_prefab(node_def.prefab, opts) do
-          {:ok, prefab_scene, prefab_config} ->
-            overrides = node_def.extras || %{}
+      cond do
+        node_def.scene ->
+          build_scene_ref_node(node_def, parent, opts)
 
-            {:ok, updated_parent, _merged} =
-              PrefabLoader.instantiate_prefab_from_loaded(
-                prefab_scene,
-                prefab_config,
-                parent,
-                overrides
-              )
+        node_def.prefab ->
+          case PrefabLoader.load_prefab(node_def.prefab, opts) do
+            {:ok, prefab_scene, prefab_config} ->
+              overrides = node_def.extras || %{}
 
-            [child | rest] = updated_parent.children
+              {:ok, updated_parent, _merged} =
+                PrefabLoader.instantiate_prefab_from_loaded(
+                  prefab_scene,
+                  prefab_config,
+                  parent,
+                  overrides
+                )
 
-            child =
-              child
-              |> apply_transform(node_def)
-              |> Map.put(:name, to_string(node_def.name))
+              [child | rest] = updated_parent.children
 
-            {child, entity_entities} =
-              if node_def.entity do
-                merged_config = ConfigLoader.merge_config(prefab_config, overrides)
+              child =
+                child
+                |> apply_transform(node_def)
+                |> Map.put(:name, to_string(node_def.name))
 
-                case init_entity_from_def(node_def, merged_config) do
-                  {:ok, entity_id} ->
-                    {put_entity_id(child, entity_id), [{child, entity_id}]}
+              {child, entity_entities} =
+                if node_def.entity do
+                  merged_config = ConfigLoader.merge_config(prefab_config, overrides)
 
-                  {:error, _} ->
-                    {child, []}
+                  case init_entity_from_def(node_def, merged_config) do
+                    {:ok, entity_id} ->
+                      {put_entity_id(child, entity_id), [{child, entity_id}]}
+
+                    {:error, _} ->
+                      {child, []}
+                  end
+                else
+                  {child, []}
                 end
-              else
-                {child, []}
-              end
 
-            final_parent = Node.set_children(updated_parent, [child | rest])
-            {final_parent, child, entity_entities}
+              final_parent = Node.set_children(updated_parent, [child | rest])
+              {final_parent, child, entity_entities}
 
-          {:error, reason} ->
-            raise "Failed to load prefab #{node_def.prefab}: #{inspect(reason)}"
-        end
-      else
-        child = Node.new(name: to_string(node_def.name)) |> apply_transform(node_def)
-
-        {child, entity_entities} =
-          if node_def.entity do
-            config = node_def.extras || %{}
-
-            case init_entity_from_def(node_def, config) do
-              {:ok, entity_id} ->
-                {put_entity_id(child, entity_id), [{child, entity_id}]}
-
-              {:error, _} ->
-                {child, []}
-            end
-          else
-            {child, []}
+            {:error, reason} ->
+              raise "Failed to load prefab #{node_def.prefab}: #{inspect(reason)}"
           end
 
-        updated_parent = Node.add_child(parent, child)
-        {updated_parent, child, entity_entities}
+        true ->
+          child = Node.new(name: to_string(node_def.name)) |> apply_transform(node_def)
+
+          {child, entity_entities} =
+            if node_def.entity do
+              config = node_def.extras || %{}
+
+              case init_entity_from_def(node_def, config) do
+                {:ok, entity_id} ->
+                  {put_entity_id(child, entity_id), [{child, entity_id}]}
+
+                {:error, _} ->
+                  {child, []}
+              end
+            else
+              {child, []}
+            end
+
+          updated_parent = Node.add_child(parent, child)
+          {updated_parent, child, entity_entities}
       end
 
     child_entities =
@@ -547,6 +570,62 @@ defmodule Lunity.SceneLoader do
 
     {%{node | children: updated_children}, acc}
   end
+
+  defp build_scene_ref_node(%NodeDef{scene: scene_module} = node_def, parent, opts) do
+    case resolve_scene_module(scene_module) do
+      {:ok, %Def{nodes: sub_nodes}} ->
+        group = Node.new(name: to_string(node_def.name)) |> apply_transform(node_def)
+
+        {group, sub_entities} =
+          Enum.reduce(sub_nodes, {group, []}, fn sub_def, {grp, ents} ->
+            {:ok, updated_grp, new_ents} = build_node_from_def(sub_def, grp, opts)
+            {updated_grp, ents ++ new_ents}
+          end)
+
+        updated_parent = Node.add_child(parent, group)
+        {updated_parent, group, sub_entities}
+
+      {:error, reason} ->
+        raise "Failed to load sub-scene #{inspect(scene_module)}: #{inspect(reason)}"
+    end
+  end
+
+  defp resolve_scene_module(module) when is_atom(module) do
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        if function_exported?(module, :__scene_def__, 0) do
+          case module.__scene_def__() do
+            %Def{} = scene_def -> {:ok, scene_def}
+            nil -> {:error, {:no_scene_def, module}}
+          end
+        else
+          {:error, {:not_a_scene, module}}
+        end
+
+      {:error, _} ->
+        {:error, {:module_not_found, module}}
+    end
+  end
+
+  defp check_property_conflicts(%NodeDef{prefab: prefab, entity: entity})
+       when is_atom(prefab) and prefab != nil and is_atom(entity) and entity != nil do
+    prefab_spec = Lunity.Properties.extras_spec(prefab)
+    entity_spec = Lunity.Properties.extras_spec(entity)
+
+    if prefab_spec && entity_spec do
+      prefab_keys = Map.keys(prefab_spec) |> MapSet.new()
+      entity_keys = Map.keys(entity_spec) |> MapSet.new()
+      conflicts = MapSet.intersection(prefab_keys, entity_keys)
+
+      unless MapSet.size(conflicts) == 0 do
+        raise ArgumentError,
+              "Property conflict between prefab #{inspect(prefab)} and entity #{inspect(entity)}: " <>
+                "#{inspect(MapSet.to_list(conflicts))} declared in both"
+      end
+    end
+  end
+
+  defp check_property_conflicts(_node_def), do: :ok
 
   defp generate_entity_id do
     :erlang.unique_integer([:positive])

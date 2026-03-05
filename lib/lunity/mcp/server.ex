@@ -96,19 +96,19 @@ defmodule Lunity.MCP.Server do
       name("Get Blender Extras Script")
 
       description(
-        "Returns a Python script to add Blender custom properties from an entity's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
+        "Returns a Python script to add Blender custom properties from a prefab's extras spec. Pass the script to Blender MCP execute_blender_code to apply to selected object(s)."
       )
     end
 
     input_schema(%{
       type: "object",
       properties: %{
-        entity: %{
+        prefab: %{
           type: "string",
-          description: "Entity module name (e.g. 'MyGame.Door')"
+          description: "Prefab module name (e.g. 'MyGame.Prefabs.Door')"
         }
       },
-      required: ["entity"]
+      required: ["prefab"]
     })
   end
 
@@ -533,9 +533,9 @@ defmodule Lunity.MCP.Server do
     end
   end
 
-  defp do_handle_tool_call("get_blender_extras_script", %{"entity" => entity}, state)
-       when is_binary(entity) do
-    case BlenderExtras.generate_script(entity) do
+  defp do_handle_tool_call("get_blender_extras_script", %{"prefab" => prefab}, state)
+       when is_binary(prefab) do
+    case BlenderExtras.generate_script(prefab) do
       {:ok, script} ->
         {:ok, %{content: [%{type: "text", text: script}], is_error?: false}, state}
 
@@ -547,7 +547,7 @@ defmodule Lunity.MCP.Server do
 
   defp do_handle_tool_call("get_blender_extras_script", _args, state) do
     content =
-      "get_blender_extras_script requires an 'entity' argument (e.g. {\"entity\": \"MyGame.Door\"})."
+      "get_blender_extras_script requires a 'prefab' argument (e.g. {\"prefab\": \"MyGame.Prefabs.Door\"})."
 
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end

@@ -25,6 +25,7 @@ defmodule Lunity.Scene.NodeDef do
   - `:position` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:scale` - `{x, y, z}` tuple or `[x, y, z]` list
   - `:rotation` - `{x, y, z, w}` quaternion tuple or list
+  - `:scene` - Scene module atom for sub-scene composition (mutually exclusive with `:prefab`)
   - `:children` - List of child `NodeDef` structs (for nested hierarchies)
   """
   @type vec3 :: {number(), number(), number()}
@@ -32,8 +33,9 @@ defmodule Lunity.Scene.NodeDef do
 
   @type t :: %__MODULE__{
           name: atom(),
-          prefab: String.t() | nil,
+          prefab: module() | String.t() | nil,
           entity: module() | nil,
+          scene: module() | nil,
           config: String.t() | nil,
           extras: map() | nil,
           position: vec3() | nil,
@@ -46,6 +48,7 @@ defmodule Lunity.Scene.NodeDef do
     :name,
     :prefab,
     :entity,
+    :scene,
     :config,
     :extras,
     :position,
@@ -81,13 +84,25 @@ defmodule Lunity.Scene.DSL do
   @doc """
   Defines a scene containing node declarations.
 
-  Returns a `%Lunity.Scene.Def{}` struct.
+  In a compiled module (`use Lunity.Scene`), stores the definition for
+  `__scene_def__/0`. In `.exs` files, returns the `%Lunity.Scene.Def{}` directly.
   """
   defmacro scene(do: block) do
     nodes = extract_nodes(block)
+    caller = __CALLER__
 
-    quote do
-      %Def{nodes: unquote(nodes)}
+    has_scene_attr? =
+      caller.module != nil and
+        Module.has_attribute?(caller.module, :lunity_scene_def)
+
+    if has_scene_attr? do
+      quote do
+        @lunity_scene_def %Def{nodes: unquote(nodes)}
+      end
+    else
+      quote do
+        %Def{nodes: unquote(nodes)}
+      end
     end
   end
 
@@ -96,8 +111,9 @@ defmodule Lunity.Scene.DSL do
 
   ## Options
 
-  - `:prefab` - Prefab ID (e.g. `"box"`)
+  - `:prefab` - Prefab module or string ID (e.g. `Pong.Prefabs.Box` or `"box"`)
   - `:entity` - Entity module atom (e.g. `Pong.Paddle`)
+  - `:scene` - Scene module atom for sub-scene composition (mutually exclusive with `:prefab`)
   - `:config` - Config path for entity defaults
   - `:extras` - Map of per-instance overrides
   - `:position` - `{x, y, z}` position
@@ -105,14 +121,23 @@ defmodule Lunity.Scene.DSL do
   - `:rotation` - `{x, y, z, w}` quaternion rotation
   """
   def node(name, opts \\ []) when is_atom(name) do
+    prefab = opts[:prefab]
+    scene_ref = opts[:scene]
+
+    if prefab && scene_ref do
+      raise ArgumentError,
+            "node #{inspect(name)}: :prefab and :scene are mutually exclusive"
+    end
+
     position = validate_vec3(opts[:position], :position)
     scale = validate_vec3(opts[:scale], :scale)
     rotation = validate_quat(opts[:rotation], :rotation)
 
     %NodeDef{
       name: name,
-      prefab: opts[:prefab],
+      prefab: prefab,
       entity: opts[:entity],
+      scene: scene_ref,
       config: opts[:config],
       extras: opts[:extras],
       position: position,
