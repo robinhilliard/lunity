@@ -3,8 +3,8 @@ defmodule Lunity.TestEntity do
   use Lunity.Entity, config: "test/config"
 
   entity do
-    property :open_angle, :float, default: 90, min: 0, max: 360
-    property :health, :integer, default: 100, min: 0
+    property(:open_angle, :float, default: 90, min: 0, max: 360)
+    property(:health, :integer, default: 100, min: 0)
   end
 
   @impl Lunity.Entity

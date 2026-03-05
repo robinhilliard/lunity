@@ -49,10 +49,11 @@ defmodule Mix.Tasks.Lunity.Mcp do
   @impl Mix.Task
   def run(args) do
     # Default HTTP: stdio breaks due to group leader issues (wx/GL)
-    use_http = System.get_env("LUNITY_HTTP") != "0" and ("--stdio" not in args)
+    use_http = System.get_env("LUNITY_HTTP") != "0" and "--stdio" not in args
 
     # When running from lunity project, use LUNITY_PROJECT to target a game (e.g. pong)
     project_dir = project_dir_from_args(args)
+
     if project_dir do
       File.cd!(project_dir)
     end
@@ -71,6 +72,7 @@ defmodule Mix.Tasks.Lunity.Mcp do
         _ -> :ok
       end
     end
+
     log.("Starting Lunity MCP...")
 
     # Headless mode: skip editor window (wx/GL often fails when Cursor spawns MCP subprocess).
@@ -96,9 +98,11 @@ defmodule Mix.Tasks.Lunity.Mcp do
 
     Application.put_env(:lunity, :project_priv, project_priv)
     app = Mix.Project.get!().project()[:app]
+
     if app && app != :lunity do
       Application.put_env(:lunity, :project_app, app)
     end
+
     log.("project_priv=#{project_priv}")
 
     Application.put_env(:logger, :backends, [])
@@ -112,7 +116,9 @@ defmodule Mix.Tasks.Lunity.Mcp do
 
     System.at_exit(fn reason ->
       try do
-        File.write!(log_file, "[#{DateTime.utc_now()}] Process exiting: #{inspect(reason)}\n", [:append])
+        File.write!(log_file, "[#{DateTime.utc_now()}] Process exiting: #{inspect(reason)}\n", [
+          :append
+        ])
       rescue
         _ -> :ok
       end
@@ -122,7 +128,12 @@ defmodule Mix.Tasks.Lunity.Mcp do
     log.("Lunity app started")
 
     # Start MCP server immediately so Cursor gets a response before timing out.
-    log.(if(headless, do: "Starting MCP server (headless)...", else: "Starting MCP server (with editor)..."))
+    log.(
+      if(headless,
+        do: "Starting MCP server (headless)...",
+        else: "Starting MCP server (with editor)..."
+      )
+    )
 
     transport_opts =
       if use_http do

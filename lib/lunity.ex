@@ -9,14 +9,16 @@ defmodule Lunity do
   """
   def project_app do
     case Lunity.Editor.State.get_project_context() do
-      {_, app} when not is_nil(app) -> app
+      {_, app} when not is_nil(app) ->
+        app
+
       _ ->
         Process.get(:lunity_project_app) ||
           Application.get_env(:lunity, :project_app) ||
-          (case Mix.Project.get() do
+          case Mix.Project.get() do
             nil -> :lunity
             project -> project.project()[:app]
-          end)
+          end
     end
   end
 

@@ -102,7 +102,12 @@ defmodule Lunity.Editor.View do
 
   defp load_scene_and_apply(state, program, path, cwd, app) do
     opts = [shader_program: program]
-    opts = if cwd, do: Keyword.put(opts, :project_cwd, cwd) |> Keyword.put(:project_app, app), else: opts
+
+    opts =
+      if cwd,
+        do: Keyword.put(opts, :project_cwd, cwd) |> Keyword.put(:project_app, app),
+        else: opts
+
     case SceneLoader.load_scene(path, opts) do
       {:ok, scene, entities} ->
         State.set_scene(scene, path, entities, :scene)
@@ -113,6 +118,7 @@ defmodule Lunity.Editor.View do
       {:error, {:scene_builder_error, _} = reason} ->
         # Retry: host app (e.g. Pong.SceneBuilder) may not be loaded yet at startup
         retries = Map.get(state, :load_retries, 0)
+
         if retries < 60 do
           State.put_load_command(path, cwd, app)
           State.put_load_result({:error, reason})

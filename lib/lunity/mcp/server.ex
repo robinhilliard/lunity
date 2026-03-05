@@ -432,6 +432,7 @@ defmodule Lunity.MCP.Server do
       Process.put(:lunity_project_cwd, cwd)
       if app = state[:project_app], do: Process.put(:lunity_project_app, app)
     end
+
     state
   end
 
@@ -443,6 +444,7 @@ defmodule Lunity.MCP.Server do
 
   defp do_handle_tool_call("set_project", %{"cwd" => cwd} = args, state) when is_binary(cwd) do
     cwd = String.trim(cwd)
+
     app =
       case args["app"] do
         a when is_binary(a) and a != "" -> String.to_atom(a)
@@ -491,6 +493,7 @@ defmodule Lunity.MCP.Server do
         {c, a} when not is_nil(c) -> {c, a}
         _ -> State.get_project_context() || {nil, nil}
       end
+
     State.put_load_command(path, cwd, app)
 
     # Poll for result (editor processes on next frame, ~16ms at 60fps)
@@ -531,7 +534,7 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("get_blender_extras_script", %{"entity" => entity}, state)
-      when is_binary(entity) do
+       when is_binary(entity) do
     case BlenderExtras.generate_script(entity) do
       {:ok, script} ->
         {:ok, %{content: [%{type: "text", text: script}], is_error?: false}, state}
@@ -566,7 +569,7 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("editor_set_context", %{"type" => type, "path" => path}, state)
-      when type in ["scene", "prefab"] and is_binary(path) do
+       when type in ["scene", "prefab"] and is_binary(path) do
     atom_type = if type == "scene", do: :scene, else: :prefab
     State.set_context(atom_type, path)
 
@@ -695,7 +698,7 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("entity_get", %{"entity_id" => eid, "component" => comp}, state)
-      when is_integer(eid) and is_binary(comp) do
+       when is_integer(eid) and is_binary(comp) do
     case resolve_component_module(comp) do
       {:ok, mod} ->
         try do
@@ -720,7 +723,7 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("entity_at_screen", %{"x" => x, "y" => y}, state)
-      when is_number(x) and is_number(y) do
+       when is_number(x) and is_number(y) do
     State.put_pick_request(x, y)
     result = poll_pick_result(60, 50)
 
@@ -820,11 +823,11 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call(
-        "entity_set",
-        %{"entity_id" => eid, "component" => comp, "value" => val},
-        state
-      )
-      when is_integer(eid) and is_binary(comp) and is_map(val) do
+         "entity_set",
+         %{"entity_id" => eid, "component" => comp, "value" => val},
+         state
+       )
+       when is_integer(eid) and is_binary(comp) and is_map(val) do
     case resolve_component_module(comp) do
       {:ok, mod} ->
         try do
@@ -908,6 +911,7 @@ defmodule Lunity.MCP.Server do
 
   defp infer_app_from_mix(cwd) do
     mix_exs = Path.join(cwd, "mix.exs")
+
     if File.exists?(mix_exs) do
       case File.read(mix_exs) do
         {:ok, content} ->
@@ -915,7 +919,9 @@ defmodule Lunity.MCP.Server do
             [_, app_str] -> String.to_atom(app_str)
             _ -> nil
           end
-        _ -> nil
+
+        _ ->
+          nil
       end
     else
       nil

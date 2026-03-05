@@ -7,9 +7,9 @@ defmodule Lunity.EntityTest do
     use Lunity.Entity
 
     entity do
-      property :health, :integer, default: 100, min: 0, max: 200
-      property :open_angle, :float, default: 90, min: 0, max: 360
-      property :key_id, :string
+      property(:health, :integer, default: 100, min: 0, max: 200)
+      property(:open_angle, :float, default: 90, min: 0, max: 360)
+      property(:key_id, :string)
     end
 
     @impl Lunity.Entity
@@ -20,11 +20,11 @@ defmodule Lunity.EntityTest do
     use Lunity.Entity, config: "test/defaults"
 
     entity do
-      property :speed, :float, default: 5.0
-      property :side, :atom, values: [:left, :right]
+      property(:speed, :float, default: 5.0)
+      property(:side, :atom, values: [:left, :right])
 
-      component FakeVelocity
-      component FakePaddleInput
+      component(FakeVelocity)
+      component(FakePaddleInput)
     end
 
     @impl Lunity.Entity

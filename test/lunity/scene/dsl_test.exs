@@ -8,8 +8,8 @@ defmodule Lunity.Scene.DSLTest do
     test "returns a Scene.Def with nodes" do
       result =
         scene do
-          node :floor, prefab: "box", position: {0, 0, -1}, scale: {12, 6, 0.3}
-          node :ball, prefab: "box", position: {0, 0, 0.5}, scale: {0.4, 0.4, 0.4}
+          node(:floor, prefab: "box", position: {0, 0, -1}, scale: {12, 6, 0.3})
+          node(:ball, prefab: "box", position: {0, 0, 0.5}, scale: {0.4, 0.4, 0.4})
         end
 
       assert %Def{nodes: nodes} = result
@@ -19,7 +19,7 @@ defmodule Lunity.Scene.DSLTest do
     test "single node scene" do
       result =
         scene do
-          node :only, prefab: "box"
+          node(:only, prefab: "box")
         end
 
       assert %Def{nodes: [%NodeDef{name: :only, prefab: "box"}]} = result
@@ -28,8 +28,15 @@ defmodule Lunity.Scene.DSLTest do
 
   describe "node/2" do
     test "creates a NodeDef with all options" do
-      n = node(:paddle, prefab: "box", entity: SomeModule, config: "paddles/default",
-               position: {1, 2, 3}, scale: {4, 5, 6}, extras: %{side: :left})
+      n =
+        node(:paddle,
+          prefab: "box",
+          entity: SomeModule,
+          config: "paddles/default",
+          position: {1, 2, 3},
+          scale: {4, 5, 6},
+          extras: %{side: :left}
+        )
 
       assert %NodeDef{} = n
       assert n.name == :paddle
@@ -96,7 +103,9 @@ defmodule Lunity.Scene.DSLTest do
       """
 
       {result, _bindings} = Code.eval_string(code)
-      assert %Def{nodes: [%NodeDef{name: :test_node, prefab: "box", position: {1, 2, 3}}]} = result
+
+      assert %Def{nodes: [%NodeDef{name: :test_node, prefab: "box", position: {1, 2, 3}}]} =
+               result
     end
   end
 end

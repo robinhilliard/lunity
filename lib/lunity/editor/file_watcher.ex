@@ -41,8 +41,11 @@ defmodule Lunity.Editor.FileWatcher do
           {:ok, %{watcher: watcher_pid, debounce_ref: nil, last_scene_path: nil}}
 
         other ->
-          Logger.warning("FileWatcher: could not start file watcher (#{inspect(other)}). " <>
-            "Auto-reload disabled. On Linux, install inotify-tools: sudo apt install inotify-tools")
+          Logger.warning(
+            "FileWatcher: could not start file watcher (#{inspect(other)}). " <>
+              "Auto-reload disabled. On Linux, install inotify-tools: sudo apt install inotify-tools"
+          )
+
           {:ok, %{watcher: nil, debounce_ref: nil, last_scene_path: nil}}
       end
     end

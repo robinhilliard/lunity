@@ -101,29 +101,34 @@ defmodule Lunity.SceneLoader do
 
           {:error, :nofile} ->
             # Ensure host app is started (editor may run before project app is fully loaded)
-            app = module |> Module.split() |> List.first() |> String.downcase() |> String.to_atom()
+            app =
+              module |> Module.split() |> List.first() |> String.downcase() |> String.to_atom()
+
             _ = Application.ensure_all_started(app)
             # Add app's ebin to code path; use opts (from load command) or ETS or project_priv
             try do
               ebin =
                 opts[:project_cwd] ||
-                  (case Lunity.Editor.State.get_project_context() do
+                  case Lunity.Editor.State.get_project_context() do
                     {cwd, _} when is_binary(cwd) -> cwd
                     _ -> nil
-                  end)
+                  end
 
               ebin =
                 if ebin do
                   Path.join(ebin, "_build/dev/lib/#{app}/ebin")
                 else
                   project_priv = Application.get_env(:lunity, :project_priv)
+
                   if project_priv do
                     Path.join(Path.dirname(project_priv), "_build/dev/lib/#{app}/ebin")
                   else
                     Path.join(Application.app_dir(app), "ebin")
                   end
                 end
+
               ebin = Path.expand(ebin)
+
               if File.dir?(ebin) do
                 # Elixir's :code.add_path uses add_path/2 with :nocache; Erlang add_path/1 works
                 apply(:code, :add_path, [String.to_charlist(ebin)])
@@ -131,10 +136,12 @@ defmodule Lunity.SceneLoader do
             rescue
               _ -> :ok
             end
+
             case Code.ensure_loaded(module) do
               {:module, _} ->
                 shader_opts = Keyword.take(opts, [:shader_program])
                 builder_opts = [app: Keyword.get(opts, :app, current_app())] ++ shader_opts
+
                 try do
                   case apply(module, function, [builder_opts]) do
                     {:ok, scene} -> {:ok, scene}
@@ -144,6 +151,7 @@ defmodule Lunity.SceneLoader do
                 rescue
                   e -> {:error, {:scene_builder_error, Exception.message(e)}}
                 end
+
               {:error, _} ->
                 {:error, {:scene_builder_error, "module #{inspect(module)} is not available"}}
             end
@@ -282,7 +290,10 @@ defmodule Lunity.SceneLoader do
 
     struct_config =
       if function_exported?(entity_module, :__extras_spec__, 0) do
-        Entity.from_config(entity_module, if(is_list(full_config), do: Map.new(full_config), else: full_config))
+        Entity.from_config(
+          entity_module,
+          if(is_list(full_config), do: Map.new(full_config), else: full_config)
+        )
       else
         full_config
       end

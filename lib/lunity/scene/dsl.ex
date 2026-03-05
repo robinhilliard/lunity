@@ -143,8 +143,12 @@ defmodule Lunity.Scene.DSL do
   end
 
   defp validate_vec3(nil, _field), do: nil
-  defp validate_vec3({x, y, z}, _field) when is_number(x) and is_number(y) and is_number(z), do: {x, y, z}
-  defp validate_vec3([x, y, z], _field) when is_number(x) and is_number(y) and is_number(z), do: {x, y, z}
+
+  defp validate_vec3({x, y, z}, _field) when is_number(x) and is_number(y) and is_number(z),
+    do: {x, y, z}
+
+  defp validate_vec3([x, y, z], _field) when is_number(x) and is_number(y) and is_number(z),
+    do: {x, y, z}
 
   defp validate_vec3(other, field) do
     raise ArgumentError, "#{field} must be {x, y, z} or [x, y, z], got: #{inspect(other)}"

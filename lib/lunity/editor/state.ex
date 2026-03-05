@@ -97,7 +97,9 @@ defmodule Lunity.Editor.State do
   @doc "Set project context from set_project tool. Used by SceneLoader to find modules."
   def put_project_context(cwd, app) when is_binary(cwd) do
     case :ets.whereis(@table) do
-      :undefined -> :ok
+      :undefined ->
+        :ok
+
       _ ->
         :ets.insert(@table, {:project_cwd, cwd})
         :ets.insert(@table, {:project_app, app})
@@ -108,7 +110,9 @@ defmodule Lunity.Editor.State do
   @doc "Get project context. Returns {cwd, app} or nil."
   def get_project_context do
     case :ets.whereis(@table) do
-      :undefined -> nil
+      :undefined ->
+        nil
+
       _ ->
         case {:ets.lookup(@table, :project_cwd), :ets.lookup(@table, :project_app)} do
           {[{:project_cwd, cwd}], [{:project_app, app}]} -> {cwd, app}

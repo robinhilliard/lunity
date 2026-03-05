@@ -27,11 +27,11 @@ defmodule Lunity.Application do
   end
 
   defp init_project_context_from_mix do
-    case {Application.get_env(:lunity, :project_priv),
-          Application.get_env(:lunity, :project_app)} do
+    case {Application.get_env(:lunity, :project_priv), Application.get_env(:lunity, :project_app)} do
       {priv, app} when is_binary(priv) and app ->
         cwd = Path.dirname(priv)
         Lunity.Editor.State.put_project_context(cwd, app)
+
       _ ->
         :ok
     end
