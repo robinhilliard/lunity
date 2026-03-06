@@ -6,9 +6,10 @@ defmodule Lunity.Scene.Def do
   SceneLoader builds an EAGL scene graph from this definition.
   """
   @type t :: %__MODULE__{
-          nodes: [Lunity.Scene.NodeDef.t()]
+          nodes: [Lunity.Scene.NodeDef.t()],
+          source_file: String.t() | nil
         }
-  defstruct nodes: []
+  defstruct nodes: [], source_file: nil
 end
 
 defmodule Lunity.Scene.NodeDef do
@@ -96,9 +97,11 @@ defmodule Lunity.Scene.DSL do
   defmacro scene(do: block) do
     nodes = extract_nodes(block)
 
+    caller_file = __CALLER__.file
+
     if __CALLER__.module != nil and __CALLER__.function == nil do
       quote do
-        @lunity_scene_def %Def{nodes: unquote(nodes)}
+        @lunity_scene_def %Def{nodes: unquote(nodes), source_file: unquote(caller_file)}
       end
     else
       quote do

@@ -92,6 +92,35 @@ defmodule Lunity.Scene.DSLTest do
     end
   end
 
+  describe "source_file tracking" do
+    test "compiled scene module captures source_file" do
+      defmodule TestSceneForSourceFile do
+        use Lunity.Scene
+
+        scene do
+          node(:item, prefab: "box", position: {0, 0, 0})
+        end
+      end
+
+      scene_def = TestSceneForSourceFile.__scene_def__()
+      assert scene_def.source_file == __ENV__.file
+    end
+
+    test ".exs-style scene has nil source_file" do
+      code = """
+      import Lunity.Scene.DSL
+      alias Lunity.Scene.Def
+
+      scene do
+        node :item, prefab: "box"
+      end
+      """
+
+      {result, _} = Code.eval_string(code)
+      assert %Def{source_file: nil} = result
+    end
+  end
+
   describe "scene evaluated from .exs-style code" do
     test "Code.eval_string works with the DSL" do
       code = """
