@@ -1,14 +1,19 @@
 defmodule Lunity.Editor.View do
   @moduledoc """
-  Orbit camera view for the Lunity editor. Renders the current scene.
+  Quad-viewport editor view for Lunity.
 
-  Processes load commands from ETS (queued by MCP scene_load) on each frame.
-  GL context must be current when loading (we're in the render loop).
+  Renders four viewports in a single GL canvas:
+  - Top-left: Top (orthographic, looking down Y)
+  - Top-right: Perspective (orbit camera)
+  - Bottom-left: Front (orthographic, looking along Z)
+  - Bottom-right: Right (orthographic, looking along X)
+
+  Dividers between viewports are draggable. Mouse events are routed
+  to the viewport the cursor is over.
   """
   use EAGL.Window
   use EAGL.Const
   use WX.Const
-  use EAGL.OrbitCamera
 
   import Bitwise
   alias EAGL.Scene
@@ -16,6 +21,10 @@ defmodule Lunity.Editor.View do
   alias Lunity.Editor.HierarchyTree
   alias Lunity.PrefabLoader
   alias Lunity.SceneLoader
+
+  @divider_hit_zone 5
+  @split_min 0.15
+  @split_max 0.85
 
   def run(opts \\ []) do
     default_opts = [
@@ -49,22 +58,32 @@ defmodule Lunity.Editor.View do
     with {:ok, program} <- GLTF.EAGL.create_pbr_shader() do
       orbit = EAGL.OrbitCamera.new()
 
-      {:ok,
-       %{
-         program: program,
-         orbit: orbit,
-         tried_default: false,
-         load_retries: 0,
-         frame: 0,
-         tree_scene_path: nil,
-         tree_project_done: false
-       }}
+      state = %{
+        program: program,
+        orbit: orbit,
+        cam_top: EAGL.OrthoCamera.new(axis: :top),
+        cam_front: EAGL.OrthoCamera.new(axis: :front),
+        cam_right: EAGL.OrthoCamera.new(axis: :right),
+        h_split: 0.5,
+        v_split: 0.5,
+        dragging: nil,
+        active_viewport: :perspective,
+        tried_default: false,
+        load_retries: 0,
+        frame: 0,
+        last_w: 1024.0,
+        last_h: 768.0,
+        tree_scene_path: nil,
+        tree_project_done: false
+      }
+
+      {:ok, state}
     end
   end
 
   @impl true
   def render(w, h, state) do
-    state = %{state | frame: Map.get(state, :frame, 0) + 1}
+    state = %{state | frame: Map.get(state, :frame, 0) + 1, last_w: w, last_h: h}
     state = apply_orbit_command(state)
     state = maybe_load_default_scene(state)
     state = process_load_command(state)
@@ -72,15 +91,325 @@ defmodule Lunity.Editor.View do
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
     state = process_pick_request(state, w, h)
-    {:ok, state} = do_render(w, h, state)
+
+    :gl.clearColor(0.1, 0.1, 0.12, 1.0)
+    :gl.clear(@gl_color_buffer_bit ||| @gl_depth_buffer_bit)
+    :gl.enable(@gl_cull_face)
+    :gl.cullFace(@gl_back)
+    :gl.enable(@gl_scissor_test)
+
+    rects = viewport_rects(w, h, state.h_split, state.v_split)
+
+    state = render_viewport(state, :top, rects.top_left, w, h, 0.18, 0.18, 0.22)
+    state = render_viewport(state, :perspective, rects.top_right, w, h, 0.15, 0.15, 0.2)
+    state = render_viewport(state, :front, rects.bottom_left, w, h, 0.18, 0.18, 0.22)
+    state = render_viewport(state, :right, rects.bottom_right, w, h, 0.18, 0.18, 0.22)
+
+    :gl.disable(@gl_scissor_test)
+
     sync_orbit_to_ets(state)
     {:ok, state}
   end
 
+  # --- Viewport rendering ---
+
+  defp render_viewport(state, viewport_id, {vx, vy, vw, vh}, _w, _h, cr, cg, cb) do
+    vx = trunc(vx)
+    vy = trunc(vy)
+    vw = trunc(vw)
+    vh = trunc(vh)
+
+    if vw > 0 and vh > 0 do
+      :gl.viewport(vx, vy, vw, vh)
+      :gl.scissor(vx, vy, vw, vh)
+      :gl.clearColor(cr, cg, cb, 1.0)
+      :gl.clear(@gl_color_buffer_bit ||| @gl_depth_buffer_bit)
+
+      :gl.useProgram(state.program)
+
+      {view, proj, view_pos} = camera_matrices(state, viewport_id, vw, vh)
+
+      GLTF.EAGL.set_pbr_uniforms(state.program,
+        view_pos: view_pos,
+        skip_lights: true
+      )
+
+      case State.get_scene() do
+        %Scene{} = scene -> Scene.render(scene, view, proj)
+        nil -> :ok
+      end
+    end
+
+    state
+  end
+
+  defp camera_matrices(state, :perspective, vw, vh) do
+    orbit = state.orbit
+    view = EAGL.OrbitCamera.get_view_matrix(orbit)
+    proj = EAGL.OrbitCamera.get_projection_matrix(orbit, vw / max(vh, 1))
+    pos = EAGL.OrbitCamera.get_position(orbit)
+    {view, proj, pos}
+  end
+
+  defp camera_matrices(state, :top, vw, vh) do
+    cam = state.cam_top
+    view = EAGL.OrthoCamera.get_view_matrix(cam)
+    proj = EAGL.OrthoCamera.get_projection_matrix(cam, vw / max(vh, 1))
+    pos = EAGL.OrthoCamera.get_position(cam)
+    {view, proj, pos}
+  end
+
+  defp camera_matrices(state, :front, vw, vh) do
+    cam = state.cam_front
+    view = EAGL.OrthoCamera.get_view_matrix(cam)
+    proj = EAGL.OrthoCamera.get_projection_matrix(cam, vw / max(vh, 1))
+    pos = EAGL.OrthoCamera.get_position(cam)
+    {view, proj, pos}
+  end
+
+  defp camera_matrices(state, :right, vw, vh) do
+    cam = state.cam_right
+    view = EAGL.OrthoCamera.get_view_matrix(cam)
+    proj = EAGL.OrthoCamera.get_projection_matrix(cam, vw / max(vh, 1))
+    pos = EAGL.OrthoCamera.get_position(cam)
+    {view, proj, pos}
+  end
+
+  # --- Viewport geometry ---
+
+  defp viewport_rects(w, h, h_split, v_split) do
+    split_x = w * h_split
+    split_y = h * v_split
+
+    %{
+      top_left: {0, split_y, split_x, h - split_y},
+      top_right: {split_x, split_y, w - split_x, h - split_y},
+      bottom_left: {0, 0, split_x, split_y},
+      bottom_right: {split_x, 0, w - split_x, split_y}
+    }
+  end
+
+  defp viewport_at(x, y, w, h, h_split, v_split) do
+    split_x = w * h_split
+    split_y = h * (1.0 - v_split)
+
+    cond do
+      x < split_x and y < split_y -> :top
+      x >= split_x and y < split_y -> :perspective
+      x < split_x and y >= split_y -> :front
+      true -> :right
+    end
+  end
+
+  # --- Event handling ---
+
+  @impl true
+  def handle_event({:tick, _dt}, state) do
+    {:ok, state}
+  end
+
+  def handle_event({:mouse_motion, x, y}, state) do
+    state = handle_motion(state, x, y)
+    {:ok, state}
+  end
+
+  def handle_event({:mouse_down, x, y}, state) do
+    state = handle_press(state, :left, x, y)
+    {:ok, state}
+  end
+
+  def handle_event({:mouse_up, _x, _y}, state) do
+    state = handle_release(state, :left)
+    {:ok, state}
+  end
+
+  def handle_event({:middle_down, x, y}, state) do
+    state = handle_press(state, :middle, x, y)
+    {:ok, state}
+  end
+
+  def handle_event({:middle_up, _x, _y}, state) do
+    state = handle_release(state, :middle)
+    {:ok, state}
+  end
+
+  def handle_event({:mouse_wheel, x, y, wheel_rotation, _wd}, state) do
+    scroll_delta = wheel_rotation / 120.0
+    vp = viewport_at(x, y, state.last_w, state.last_h, state.h_split, state.v_split)
+    state = route_scroll(state, vp, scroll_delta)
+    {:ok, state}
+  end
+
+  def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _point}}, state) do
+    case State.get_tree() do
+      {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
+      _ -> nil
+    end
+
+    {:ok, state}
+  end
+
+  def handle_event(_event, state), do: {:ok, state}
+
+  # --- Input routing ---
+
+  defp handle_press(state, button, x, y) do
+    w = state.last_w
+    h = state.last_h
+
+    case divider_hit(x, y, w, h, state.h_split, state.v_split) do
+      :h ->
+        %{state | dragging: :h}
+
+      :v ->
+        %{state | dragging: :v}
+
+      :both ->
+        %{state | dragging: :both}
+
+      nil ->
+        vp = viewport_at(x, y, w, h, state.h_split, state.v_split)
+        state = %{state | active_viewport: vp}
+        route_press(state, vp, button, x, y)
+    end
+  end
+
+  defp handle_release(state, button) do
+    if state.dragging do
+      %{state | dragging: nil}
+    else
+      route_release(state, state.active_viewport, button)
+    end
+  end
+
+  defp handle_motion(state, x, y) do
+    if state.dragging do
+      drag_divider(state, x, y)
+    else
+      route_motion(state, state.active_viewport, x, y)
+    end
+  end
+
+  # --- Divider dragging ---
+
+  defp divider_hit(x, y, w, h, h_split, v_split) do
+    split_x = w * h_split
+    split_y = h * (1.0 - v_split)
+    near_h = abs(x - split_x) < @divider_hit_zone
+    near_v = abs(y - split_y) < @divider_hit_zone
+
+    cond do
+      near_h and near_v -> :both
+      near_h -> :h
+      near_v -> :v
+      true -> nil
+    end
+  end
+
+  defp drag_divider(state, x, y) do
+    w = state.last_w
+    h = state.last_h
+
+    state =
+      if state.dragging in [:h, :both] do
+        new_h = clamp(x / max(w, 1), @split_min, @split_max)
+        %{state | h_split: new_h}
+      else
+        state
+      end
+
+    if state.dragging in [:v, :both] do
+      new_v = clamp(1.0 - y / max(h, 1), @split_min, @split_max)
+      %{state | v_split: new_v}
+    else
+      state
+    end
+  end
+
+  # --- Camera event routing ---
+
+  defp route_press(state, :perspective, :left, x, y) do
+    orbit = state.orbit |> Map.put(:last_mouse, {x, y}) |> EAGL.OrbitCamera.handle_mouse_down()
+    %{state | orbit: orbit}
+  end
+
+  defp route_press(state, :perspective, :middle, x, y) do
+    orbit = state.orbit |> Map.put(:last_mouse, {x, y}) |> EAGL.OrbitCamera.handle_middle_down()
+    %{state | orbit: orbit}
+  end
+
+  defp route_press(state, :top, button, x, y) when button in [:left, :middle] do
+    cam = state.cam_top |> Map.put(:last_mouse, {x, y}) |> EAGL.OrthoCamera.handle_mouse_down()
+    %{state | cam_top: cam}
+  end
+
+  defp route_press(state, :front, button, x, y) when button in [:left, :middle] do
+    cam = state.cam_front |> Map.put(:last_mouse, {x, y}) |> EAGL.OrthoCamera.handle_mouse_down()
+    %{state | cam_front: cam}
+  end
+
+  defp route_press(state, :right, button, x, y) when button in [:left, :middle] do
+    cam = state.cam_right |> Map.put(:last_mouse, {x, y}) |> EAGL.OrthoCamera.handle_mouse_down()
+    %{state | cam_right: cam}
+  end
+
+  defp route_release(state, :perspective, :left) do
+    %{state | orbit: EAGL.OrbitCamera.handle_mouse_up(state.orbit)}
+  end
+
+  defp route_release(state, :perspective, :middle) do
+    %{state | orbit: EAGL.OrbitCamera.handle_middle_up(state.orbit)}
+  end
+
+  defp route_release(state, :top, _button) do
+    %{state | cam_top: EAGL.OrthoCamera.handle_mouse_up(state.cam_top)}
+  end
+
+  defp route_release(state, :front, _button) do
+    %{state | cam_front: EAGL.OrthoCamera.handle_mouse_up(state.cam_front)}
+  end
+
+  defp route_release(state, :right, _button) do
+    %{state | cam_right: EAGL.OrthoCamera.handle_mouse_up(state.cam_right)}
+  end
+
+  defp route_motion(state, :perspective, x, y) do
+    %{state | orbit: EAGL.OrbitCamera.handle_mouse_motion(state.orbit, x, y)}
+  end
+
+  defp route_motion(state, :top, x, y) do
+    %{state | cam_top: EAGL.OrthoCamera.handle_mouse_motion(state.cam_top, x, y)}
+  end
+
+  defp route_motion(state, :front, x, y) do
+    %{state | cam_front: EAGL.OrthoCamera.handle_mouse_motion(state.cam_front, x, y)}
+  end
+
+  defp route_motion(state, :right, x, y) do
+    %{state | cam_right: EAGL.OrthoCamera.handle_mouse_motion(state.cam_right, x, y)}
+  end
+
+  defp route_scroll(state, :perspective, delta) do
+    %{state | orbit: EAGL.OrbitCamera.handle_scroll(state.orbit, delta)}
+  end
+
+  defp route_scroll(state, :top, delta) do
+    %{state | cam_top: EAGL.OrthoCamera.handle_scroll(state.cam_top, delta)}
+  end
+
+  defp route_scroll(state, :front, delta) do
+    %{state | cam_front: EAGL.OrthoCamera.handle_scroll(state.cam_front, delta)}
+  end
+
+  defp route_scroll(state, :right, delta) do
+    %{state | cam_right: EAGL.OrthoCamera.handle_scroll(state.cam_right, delta)}
+  end
+
+  # --- Scene loading ---
+
   defp maybe_load_default_scene(%{tried_default: true} = state), do: state
 
   defp maybe_load_default_scene(%{tried_default: false} = state) do
-    # Wait a few frames for GL context to be fully ready (avoids empty scene on MCP startup)
     if Map.get(state, :frame, 0) < 3 do
       state
     else
@@ -137,10 +466,18 @@ defmodule Lunity.Editor.View do
         State.set_scene(scene, path, entities, :scene)
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, path, length(entities)})
-        %{state | orbit: orbit, tried_default: true, load_retries: 0}
+
+        %{
+          state
+          | orbit: orbit,
+            cam_top: EAGL.OrthoCamera.fit_to_scene(scene, :top),
+            cam_front: EAGL.OrthoCamera.fit_to_scene(scene, :front),
+            cam_right: EAGL.OrthoCamera.fit_to_scene(scene, :right),
+            tried_default: true,
+            load_retries: 0
+        }
 
       {:error, {:scene_builder_error, _} = reason} ->
-        # Retry: host app (e.g. Pong.SceneBuilder) may not be loaded yet at startup
         retries = Map.get(state, :load_retries, 0)
 
         if retries < 60 do
@@ -166,7 +503,14 @@ defmodule Lunity.Editor.View do
         State.set_scene(scene, id, [], :prefab)
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, id, 0})
-        %{state | orbit: orbit}
+
+        %{
+          state
+          | orbit: orbit,
+            cam_top: EAGL.OrthoCamera.fit_to_scene(scene, :top),
+            cam_front: EAGL.OrthoCamera.fit_to_scene(scene, :front),
+            cam_right: EAGL.OrthoCamera.fit_to_scene(scene, :right)
+        }
 
       {:error, reason} ->
         State.clear_scene()
@@ -198,15 +542,14 @@ defmodule Lunity.Editor.View do
     end
   end
 
+  # --- Capture & pick (operate on perspective viewport) ---
+
   defp process_capture_request(state, w, h) do
     case State.take_capture_request() do
       {:capture, _view_id} ->
         case do_capture(trunc(w), trunc(h)) do
-          {:ok, base64} ->
-            State.put_capture_result({:ok, base64})
-
-          {:error, reason} ->
-            State.put_capture_result({:error, reason})
+          {:ok, base64} -> State.put_capture_result({:ok, base64})
+          {:error, reason} -> State.put_capture_result({:error, reason})
         end
 
       nil ->
@@ -218,7 +561,6 @@ defmodule Lunity.Editor.View do
 
   defp do_capture(width, height) when width > 0 and height > 0 do
     try do
-      # glReadPixels returns bottom-to-top; flip for standard image orientation
       pixel_data = <<0::size(width * height * 4)-unit(8)>>
       :gl.readPixels(0, 0, width, height, @gl_rgba, @gl_unsigned_byte, pixel_data)
       flipped = flip_pixels_vertical(pixel_data, width, height)
@@ -293,43 +635,7 @@ defmodule Lunity.Editor.View do
     state
   end
 
-  defp do_render(w, h, %{program: prog, orbit: orbit} = state) do
-    :gl.viewport(0, 0, trunc(w), trunc(h))
-    :gl.clearColor(0.15, 0.15, 0.2, 1.0)
-    :gl.clear(@gl_color_buffer_bit ||| @gl_depth_buffer_bit)
-    :gl.enable(@gl_cull_face)
-    :gl.cullFace(@gl_back)
-
-    :gl.useProgram(prog)
-    view = EAGL.OrbitCamera.get_view_matrix(orbit)
-    proj = EAGL.OrbitCamera.get_projection_matrix(orbit, w / max(h, 1))
-
-    GLTF.EAGL.set_pbr_uniforms(prog,
-      view_pos: EAGL.OrbitCamera.get_position(orbit),
-      skip_lights: true
-    )
-
-    case State.get_scene() do
-      %Scene{} = scene ->
-        Scene.render(scene, view, proj)
-
-      nil ->
-        :ok
-    end
-
-    {:ok, state}
-  end
-
-  def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _point}}, state) do
-    case State.get_tree() do
-      {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
-      _ -> nil
-    end
-
-    {:ok, state}
-  end
-
-  def handle_event(event, state), do: super(event, state)
+  defp clamp(val, min_val, max_val), do: max(min_val, min(max_val, val))
 
   @impl true
   def cleanup(%{program: p}) do
