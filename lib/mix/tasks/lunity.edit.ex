@@ -1,13 +1,13 @@
-defmodule Mix.Tasks.Lunity.Mcp do
-  @shortdoc "Start the Lunity MCP server (stdio or HTTP transport)"
+defmodule Mix.Tasks.Lunity.Edit do
+  @shortdoc "Start the Lunity editor with MCP server (stdio or HTTP transport)"
   @moduledoc """
-  Starts the Lunity MCP server.
+  Starts the Lunity editor and MCP server.
 
   ## HTTP (default) - stdio breaks due to group leader issues
 
   Stdio forces group leader changes that break wx/GL. Use HTTP instead.
 
-  Run from your game project: `mix lunity.mcp` (or `mix lunity.mcp --http`)
+  Run from your game project: `mix lunity.edit` (or `mix lunity.edit --http`)
 
   Cursor config (`.cursor/mcp.json`):
 
@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Lunity.Mcp do
         "mcpServers": {
           "lunity": {
             "command": "mix",
-            "args": ["lunity.mcp", "--stdio"],
+            "args": ["lunity.edit", "--stdio"],
             "cwd": "/path/to/your_game"
           }
         }
@@ -48,21 +48,18 @@ defmodule Mix.Tasks.Lunity.Mcp do
 
   @impl Mix.Task
   def run(args) do
-    # Default HTTP: stdio breaks due to group leader issues (wx/GL)
     use_http = System.get_env("LUNITY_HTTP") != "0" and "--stdio" not in args
 
-    # When running from lunity project, use LUNITY_PROJECT to target a game (e.g. pong)
     project_dir = project_dir_from_args(args)
 
     if project_dir do
       File.cd!(project_dir)
     end
 
-    # Log to project dir
     log_file =
       case File.cwd() do
-        {:ok, cwd} -> Path.join(cwd, "lunity_mcp.log")
-        _ -> "/tmp/lunity_mcp.log"
+        {:ok, cwd} -> Path.join(cwd, "lunity_edit.log")
+        _ -> "/tmp/lunity_edit.log"
       end
 
     log = fn msg ->
@@ -73,21 +70,15 @@ defmodule Mix.Tasks.Lunity.Mcp do
       end
     end
 
-    log.("Starting Lunity MCP...")
+    log.("Starting Lunity editor...")
 
-    # Headless mode: skip editor window (wx/GL often fails when Cursor spawns MCP subprocess).
-    # Set LUNITY_HEADLESS=1 in MCP config env to use. Tools needing the editor will return errors.
     headless = System.get_env("LUNITY_HEADLESS") == "1"
     Application.put_env(:lunity, :mode, if(headless, do: :library, else: :editor))
     log.("headless=#{headless}")
 
-    # Ensure we're in a Mix project
     Mix.Project.get!()
     log.("Mix project OK (cwd=#{File.cwd!()})")
 
-    # Store project priv path so Lunity can resolve it when host app isn't loaded yet
-    # (editor may run before pong finishes starting; Application.app_dir(:pong) would fail)
-    # app_path is _build/dev/lib/pong; go up 4 levels to project root
     project_priv =
       Mix.Project.app_path()
       |> Path.dirname()
@@ -108,11 +99,9 @@ defmodule Mix.Tasks.Lunity.Mcp do
     Application.put_env(:logger, :backends, [])
     Logger.configure(level: :warning)
 
-    # Ensure host app's ebin is on the code path (needed for scene module resolution)
     app_ebin = Path.join(Mix.Project.app_path(), "ebin")
     Code.prepend_path(app_ebin)
 
-    # Start the host project (e.g. pong) so scene_builders like Pong.SceneBuilder are available
     if app && app != :lunity do
       Application.ensure_all_started(app)
       log.("Host app #{app} started")
@@ -131,7 +120,6 @@ defmodule Mix.Tasks.Lunity.Mcp do
     {:ok, _} = Application.ensure_all_started(:lunity)
     log.("Lunity app started")
 
-    # Start MCP server immediately so Cursor gets a response before timing out.
     log.(
       if(headless,
         do: "Starting MCP server (headless)...",
@@ -162,8 +150,8 @@ defmodule Mix.Tasks.Lunity.Mcp do
     e ->
       log_file =
         case File.cwd() do
-          {:ok, cwd} -> Path.join(cwd, "lunity_mcp.log")
-          _ -> "lunity_mcp.log"
+          {:ok, cwd} -> Path.join(cwd, "lunity_edit.log")
+          _ -> "lunity_edit.log"
         end
 
       stack = Exception.format(:error, e, __STACKTRACE__)

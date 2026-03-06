@@ -2,7 +2,7 @@ defmodule Lunity.Editor.Manager do
   @moduledoc """
   Minimal ECSx manager for the Lunity editor when running standalone.
 
-  Used when `mix lunity.mcp` is run from the Lunity project (development).
+  Used when `mix lunity.edit` is run from the Lunity project (development).
   Has no components or systems; scenes without behaviour nodes will load.
   Scenes with behaviour nodes require the game's ECSx manager and components.
   """

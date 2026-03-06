@@ -295,7 +295,7 @@ In editor mode, Lunity watches `priv/config/`, `priv/scenes/`, and `priv/prefabs
 
 ### HTTP (default) - stdio breaks due to group leader issues
 
-Run from your game project: `mix lunity.mcp`. Cursor config (`.cursor/mcp.json`):
+Run from your game project: `mix lunity.edit`. Cursor config (`.cursor/mcp.json`):
 
 ```json
 {
