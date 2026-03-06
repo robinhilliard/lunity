@@ -460,4 +460,36 @@ defmodule Lunity.Editor.State do
     :ets.delete(@table, :highlight)
     :ok
   end
+
+  # ---------------------------------------------------------------------------
+  # Hierarchy tree
+  # ---------------------------------------------------------------------------
+
+  @doc "Store tree widget references."
+  def put_tree(tree, root, scene_root, project_root) do
+    :ets.insert(@table, {:tree, {tree, root, scene_root, project_root}})
+    :ok
+  end
+
+  @doc "Get tree widget references, or nil."
+  def get_tree do
+    case :ets.lookup(@table, :tree) do
+      [{:tree, refs}] -> refs
+      [] -> nil
+    end
+  end
+
+  @doc "Store the currently selected item in the hierarchy tree."
+  def put_selection(selection) do
+    :ets.insert(@table, {:tree_selection, selection})
+    :ok
+  end
+
+  @doc "Get the current tree selection, or nil."
+  def get_selection do
+    case :ets.lookup(@table, :tree_selection) do
+      [{:tree_selection, sel}] -> sel
+      [] -> nil
+    end
+  end
 end

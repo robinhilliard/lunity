@@ -7,11 +7,13 @@ defmodule Lunity.Editor.View do
   """
   use EAGL.Window
   use EAGL.Const
+  use WX.Const
   use EAGL.OrbitCamera
 
   import Bitwise
   alias EAGL.Scene
   alias Lunity.Editor.State
+  alias Lunity.Editor.HierarchyTree
   alias Lunity.PrefabLoader
   alias Lunity.SceneLoader
 
@@ -30,12 +32,33 @@ defmodule Lunity.Editor.View do
   end
 
   @impl true
+  def setup_layout(frame, gl_canvas) do
+    sizer = :wxBoxSizer.new(@wx_horizontal)
+
+    tree = HierarchyTree.create(frame)
+    :wxSizer.add(sizer, tree, proportion: 0, flag: @wx_expand)
+    :wxSizer.add(sizer, gl_canvas, proportion: 1, flag: @wx_expand)
+
+    sizer
+  end
+
+  @impl true
   def setup do
     State.init()
 
     with {:ok, program} <- GLTF.EAGL.create_pbr_shader() do
       orbit = EAGL.OrbitCamera.new()
-      {:ok, %{program: program, orbit: orbit, tried_default: false, load_retries: 0, frame: 0}}
+
+      {:ok,
+       %{
+         program: program,
+         orbit: orbit,
+         tried_default: false,
+         load_retries: 0,
+         frame: 0,
+         tree_scene_path: nil,
+         tree_project_done: false
+       }}
     end
   end
 
@@ -45,6 +68,7 @@ defmodule Lunity.Editor.View do
     state = apply_orbit_command(state)
     state = maybe_load_default_scene(state)
     state = process_load_command(state)
+    state = maybe_refresh_tree(state)
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
     state = process_pick_request(state, w, h)
@@ -153,6 +177,25 @@ defmodule Lunity.Editor.View do
 
   defp sync_orbit_to_ets(%{orbit: orbit}) do
     State.put_orbit(orbit)
+  end
+
+  defp maybe_refresh_tree(state) do
+    current_path = State.get_scene_path()
+
+    state =
+      if current_path != state.tree_scene_path do
+        HierarchyTree.update_scene(State.get_scene())
+        %{state | tree_scene_path: current_path}
+      else
+        state
+      end
+
+    if not state.tree_project_done and state.frame > 5 do
+      HierarchyTree.update_project()
+      %{state | tree_project_done: true}
+    else
+      state
+    end
   end
 
   defp process_capture_request(state, w, h) do
@@ -276,6 +319,17 @@ defmodule Lunity.Editor.View do
 
     {:ok, state}
   end
+
+  def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _point}}, state) do
+    case State.get_tree() do
+      {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
+      _ -> nil
+    end
+
+    {:ok, state}
+  end
+
+  def handle_event(event, state), do: super(event, state)
 
   @impl true
   def cleanup(%{program: p}) do
