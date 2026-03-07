@@ -48,6 +48,8 @@ defmodule Lunity.Editor.View do
     :wxSizer.add(sizer, tree, proportion: 0, flag: @wx_expand)
     :wxSizer.add(sizer, gl_canvas, proportion: 1, flag: @wx_expand)
 
+    State.put_frame(frame)
+
     sizer
   end
 
@@ -529,6 +531,7 @@ defmodule Lunity.Editor.View do
     state =
       if current_path != state.tree_scene_path do
         HierarchyTree.update_scene(State.get_scene())
+        State.update_window_title()
         %{state | tree_scene_path: current_path}
       else
         state

@@ -492,4 +492,42 @@ defmodule Lunity.Editor.State do
       [] -> nil
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Window frame
+  # ---------------------------------------------------------------------------
+
+  @doc "Store the wxFrame reference for title updates."
+  def put_frame(frame) do
+    :ets.insert(@table, {:frame, frame})
+    :ok
+  end
+
+  @doc "Get the wxFrame reference, or nil."
+  def get_frame do
+    case :ets.lookup(@table, :frame) do
+      [{:frame, frame}] -> frame
+      [] -> nil
+    end
+  end
+
+  @doc "Update the window title to reflect the current context."
+  def update_window_title do
+    case get_frame() do
+      nil ->
+        :ok
+
+      frame ->
+        suffix =
+          case {get_context_type(), get_scene_path()} do
+            {_, nil} -> nil
+            {:prefab, path} -> "Prefab: #{path}"
+            {:scene, path} -> "Scene: #{path}"
+          end
+
+        title = if suffix, do: "Lunity Editor — #{suffix}", else: "Lunity Editor"
+        :wxFrame.setTitle(frame, String.to_charlist(title))
+        :ok
+    end
+  end
 end
