@@ -16,12 +16,12 @@ defmodule Lunity.Editor.HierarchyTreeTest do
       assert scenes == Enum.sort(scenes)
     end
 
-    test "entities have __entity_spec__/0" do
+    test "entities have __components__/0" do
       {entities, _, _} = HierarchyTree.discover_modules()
 
       Enum.each(entities, fn mod ->
-        assert function_exported?(mod, :__entity_spec__, 0),
-               "#{inspect(mod)} should export __entity_spec__/0"
+        assert function_exported?(mod, :__components__, 0),
+               "#{inspect(mod)} should export __components__/0"
       end)
     end
 

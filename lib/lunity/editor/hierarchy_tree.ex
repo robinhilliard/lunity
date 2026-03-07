@@ -82,16 +82,28 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp add_scene_node(tree, parent_item, node) do
     name = node.name || "(unnamed)"
-    suffix = node_type_suffix(node)
-    label = if suffix, do: "#{name}  #{suffix}", else: "#{name}"
-    item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
 
-    :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
+    if auto_generated_name?(name) do
+      :ok
+    else
+      suffix = node_type_suffix(node)
+      label = if suffix, do: "#{name}  #{suffix}", else: "#{name}"
+      item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
 
-    children = node.children || []
-    Enum.each(children, fn child -> add_scene_node(tree, item, child) end)
+      :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
 
-    if children != [], do: :wxTreeCtrl.expand(tree, item)
+      children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
+      Enum.each(children, fn child -> add_scene_node(tree, item, child) end)
+
+      if children != [], do: :wxTreeCtrl.expand(tree, item)
+    end
+  end
+
+  defp auto_generated_name?(name), do: Regex.match?(~r/^node_\d+$/, name)
+
+  defp auto_generated_node?(node) do
+    name = node.name || "(unnamed)"
+    auto_generated_name?(name) and node.light == nil and node.camera == nil
   end
 
   defp node_type_suffix(node) do
@@ -189,12 +201,12 @@ defmodule Lunity.Editor.HierarchyTree do
 
     entities =
       all_loaded
-      |> Enum.filter(&exports_function?(&1, :__entity_spec__, 0))
+      |> Enum.filter(&exports_function?(&1, :__components__, 0))
       |> Enum.sort()
 
     prefabs =
       all_loaded
-      |> Enum.filter(&exports_function?(&1, :__prefab_spec__, 0))
+      |> Enum.filter(&exports_function?(&1, :__glb_id__, 0))
       |> Enum.sort()
 
     scenes =
