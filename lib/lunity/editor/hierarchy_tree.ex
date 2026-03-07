@@ -72,14 +72,19 @@ defmodule Lunity.Editor.HierarchyTree do
 
     :wxTreeCtrl.setItemText(tree, scene_root, String.to_charlist(label))
 
-    root_nodes = scene.root_nodes || []
+    displayable_nodes = unwrap_scene_root(scene.root_nodes || [])
 
-    Enum.each(root_nodes, fn node ->
+    Enum.each(displayable_nodes, fn node ->
       add_scene_node(tree, scene_root, node)
     end)
 
     :wxTreeCtrl.expand(tree, scene_root)
   end
+
+  defp unwrap_scene_root([%{name: "scene_root", children: children}]) when is_list(children),
+    do: children
+
+  defp unwrap_scene_root(nodes), do: nodes
 
   defp add_scene_node(tree, parent_item, node) do
     name = node.name || "(unnamed)"

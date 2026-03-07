@@ -318,7 +318,7 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
-  def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _point}}, state) do
+  def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _, _}}, state) do
     case State.get_tree() do
       {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
       _ -> nil
@@ -327,7 +327,7 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
-  def handle_event({:wx_event, {:wxTree, :command_tree_item_activated, item, _point}}, state) do
+  def handle_event({:wx_event, {:wxTree, :command_tree_item_activated, item, _, _}}, state) do
     case State.get_tree() do
       {tree, _, _, _} -> HierarchyTree.handle_activation(tree, item)
       _ -> nil
