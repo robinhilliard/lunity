@@ -1,11 +1,12 @@
 defmodule Mix.Tasks.Lunity.Edit do
-  @shortdoc "Start the Lunity editor with MCP server (stdio or HTTP transport)"
+  @shortdoc "Start the Lunity editor with MCP server (Phoenix HTTP or stdio transport)"
   @moduledoc """
   Starts the Lunity editor and MCP server.
 
-  ## HTTP (default) - stdio breaks due to group leader issues
+  ## HTTP via Phoenix (default) - stdio breaks due to group leader issues
 
   Stdio forces group leader changes that break wx/GL. Use HTTP instead.
+  MCP is served via ExMCP.HttpPlug mounted in a Phoenix endpoint.
 
   Run from your game project: `mix lunity.edit` (or `mix lunity.edit --http`)
 
@@ -132,24 +133,37 @@ defmodule Mix.Tasks.Lunity.Edit do
       )
     )
 
-    transport_opts =
-      if use_http do
-        port = System.get_env("LUNITY_HTTP_PORT", "4111") |> String.to_integer()
-        log.("HTTP transport on port #{port}, SSE at http://localhost:#{port}/sse")
-        [transport: :sse, port: port, sse_enabled: true]
-      else
-        log.("Stdio transport")
-        [transport: :stdio]
+    if use_http do
+      port = System.get_env("LUNITY_HTTP_PORT", "4111") |> String.to_integer()
+      log.("Phoenix endpoint on port #{port}, MCP SSE at http://localhost:#{port}/sse")
+
+      Application.put_env(:lunity, Lunity.Web.Endpoint,
+        http: [port: port],
+        server: true,
+        secret_key_base: :crypto.strong_rand_bytes(64) |> Base.encode64()
+      )
+
+      case Lunity.Web.Endpoint.start_link([]) do
+        {:ok, _pid} ->
+          log.("Phoenix endpoint started on port #{port}")
+          Process.sleep(:infinity)
+
+        {:error, reason} ->
+          log.("Phoenix endpoint failed: #{inspect(reason)}")
+          Mix.raise("Failed to start Phoenix endpoint: #{inspect(reason)}")
       end
+    else
+      log.("Stdio transport")
 
-    case Lunity.MCP.Server.start_link(transport_opts) do
-      {:ok, pid} ->
-        log.("MCP server started (pid=#{inspect(pid)})")
-        Process.sleep(:infinity)
+      case Lunity.MCP.Server.start_link(transport: :stdio) do
+        {:ok, pid} ->
+          log.("MCP server started (pid=#{inspect(pid)})")
+          Process.sleep(:infinity)
 
-      {:error, reason} ->
-        log.("MCP server failed: #{inspect(reason)}")
-        Mix.raise("Failed to start Lunity MCP server: #{inspect(reason)}")
+        {:error, reason} ->
+          log.("MCP server failed: #{inspect(reason)}")
+          Mix.raise("Failed to start Lunity MCP server: #{inspect(reason)}")
+      end
     end
   rescue
     e ->
