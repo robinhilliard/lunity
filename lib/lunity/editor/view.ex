@@ -366,12 +366,12 @@ defmodule Lunity.Editor.View do
     rects = viewport_rects(w, h, state.h_split, state.v_split)
     {vp_x, vp_y, vp_w, vp_h} = viewport_rect_for(rects, vp_id)
 
-    gl_x = trunc(x - vp_x)
-    gl_y = trunc(vp_h - (h - y - vp_y))
+    screen_x = x
+    screen_y = h - 1 - y
 
     viewport = {trunc(vp_x), trunc(vp_y), trunc(vp_w), trunc(vp_h)}
 
-    case Scene.pick(scene, camera, viewport, gl_x, gl_y) do
+    case Scene.pick(scene, camera, viewport, screen_x, screen_y) do
       {:ok, node, _world} ->
         name = node.name
         if name, do: State.put_selection({:scene_node, name})
