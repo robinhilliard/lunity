@@ -79,7 +79,8 @@ defmodule Lunity.Editor.View do
         last_h: 768.0,
         tree_scene_path: nil,
         tree_project_done: false,
-        click_origin: nil
+        click_origin: nil,
+        hover_pos: nil
       }
 
       {:ok, state}
@@ -96,6 +97,7 @@ defmodule Lunity.Editor.View do
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
     state = process_pick_request(state, w, h)
+    update_hover(state)
 
     :gl.clearColor(0.1, 0.1, 0.12, 1.0)
     :gl.clear(@gl_color_buffer_bit ||| @gl_depth_buffer_bit)
@@ -152,18 +154,38 @@ defmodule Lunity.Editor.View do
     state
   end
 
-  defp render_selection_highlight(scene, view, proj) do
-    with {:scene_node, name} <- State.get_selection(),
-         {:ok, node, world} <- Scene.find_node_with_transform(scene, name),
-         {min_pt, max_pt} <- subtree_world_aabb(node, world) do
-      :gl.useProgram(0)
-      EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
-    else
+  defp render_selection_highlight(_scene, view, proj) do
+    sel = State.get_selection()
+    hover = State.get_hover()
+
+    :gl.disable(@gl_depth_test)
+
+    case hover do
+      {:scene_node, hname, {hmin, hmax}} ->
+        sel_name = case sel do
+          {:scene_node, n, _} -> n
+          _ -> nil
+        end
+
+        unless hname == sel_name do
+          EAGL.Line.draw_aabb(hmin, hmax, view, proj, vec3(0.5, 0.4, 0.15))
+        end
+
       _ -> :ok
     end
+
+    case sel do
+      {:scene_node, _name, {min_pt, max_pt}} ->
+        EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
+
+      _ -> :ok
+    end
+
+    :gl.enable(@gl_depth_test)
   end
 
-  defp subtree_world_aabb(node, world_matrix) do
+  @doc false
+  def subtree_world_aabb(node, world_matrix) do
     collect_mesh_aabbs_at(node, world_matrix)
     |> case do
       [] -> nil
@@ -289,6 +311,7 @@ defmodule Lunity.Editor.View do
 
   def handle_event({:mouse_motion, x, y}, state) do
     state = handle_motion(state, x, y)
+    state = %{state | hover_pos: {x, y}}
     {:ok, state}
   end
 
@@ -356,6 +379,55 @@ defmodule Lunity.Editor.View do
   defp maybe_pick_at(state, _x, _y), do: state
 
   defp do_viewport_pick(state, x, y) do
+    case pick_at(state, x, y) do
+      {:ok, _node, world} ->
+        scene = State.get_scene()
+        {dsl_name, dsl_aabb} = resolve_dsl_node(scene, world)
+
+        if dsl_name && dsl_aabb do
+          State.put_selection({:scene_node, dsl_name, dsl_aabb})
+          HierarchyTree.select_by_name(dsl_name)
+        end
+
+        state
+
+      nil ->
+        State.put_selection(nil)
+        state
+    end
+  end
+
+  defp update_hover(%{hover_pos: {x, y}, dragging: nil} = state) do
+    case pick_at(state, x, y) do
+      {:ok, _node, world} ->
+        scene = State.get_scene()
+        {dsl_name, dsl_aabb} = resolve_dsl_node(scene, world)
+
+        if dsl_name && dsl_aabb do
+          State.put_hover({:scene_node, dsl_name, dsl_aabb})
+          HierarchyTree.hover_by_name(dsl_name)
+        end
+
+      nil ->
+        case HierarchyTree.poll_hover() do
+          {:scene_node, _, _} = hover -> State.put_hover(hover)
+          _ ->
+            State.put_hover(nil)
+            HierarchyTree.hover_by_name(nil)
+        end
+    end
+  end
+
+  defp update_hover(_state) do
+    case HierarchyTree.poll_hover() do
+      {:scene_node, _, _} = hover -> State.put_hover(hover)
+      _ ->
+        State.put_hover(nil)
+        HierarchyTree.hover_by_name(nil)
+    end
+  end
+
+  defp pick_at(state, x, y) do
     scene = State.get_scene()
     if scene == nil, do: throw(:no_scene)
 
@@ -364,26 +436,57 @@ defmodule Lunity.Editor.View do
     vp_id = viewport_at(x, y, w, h, state.h_split, state.v_split)
     camera = camera_for_viewport(state, vp_id)
     rects = viewport_rects(w, h, state.h_split, state.v_split)
-    {vp_x, vp_y, vp_w, vp_h} = viewport_rect_for(rects, vp_id)
+    {_vp_x, _vp_y, vp_w, vp_h} = viewport_rect_for(rects, vp_id)
 
-    screen_x = x
-    screen_y = h - 1 - y
+    {wx_left, wx_top} = wx_viewport_origin(vp_id, w, h, state.h_split, state.v_split)
+    local_x = x - wx_left
+    local_y = y - wx_top
+    viewport = {0, 0, trunc(vp_w), trunc(vp_h)}
 
-    viewport = {trunc(vp_x), trunc(vp_y), trunc(vp_w), trunc(vp_h)}
-
-    case Scene.pick(scene, camera, viewport, screen_x, screen_y) do
-      {:ok, node, _world} ->
-        name = node.name
-        if name, do: State.put_selection({:scene_node, name})
-        state
-
-      nil ->
-        State.put_selection(nil)
-        state
-    end
+    Scene.pick(scene, camera, viewport, local_x, local_y)
   catch
-    :no_scene -> state
+    :no_scene -> nil
   end
+
+  defp resolve_dsl_node(nil, _world), do: {nil, nil}
+
+  defp resolve_dsl_node(scene, picked_world) do
+    dsl_roots = unwrap_scene_root(scene.root_nodes || [])
+
+    result =
+      Enum.find_value(dsl_roots, fn root ->
+        root_local = Node.get_local_transform_matrix(root)
+
+        if has_mesh_descendant_at?(root, root_local, picked_world) do
+          aabb = subtree_world_aabb(root, root_local)
+          {root.name, aabb}
+        end
+      end)
+
+    result || {nil, nil}
+  end
+
+  defp has_mesh_descendant_at?(node, world, target) do
+    if Node.get_mesh(node) != nil and world == target do
+      true
+    else
+      (node.children || [])
+      |> Enum.any?(fn child ->
+        child_world = mat4_mul(world, Node.get_local_transform_matrix(child))
+        has_mesh_descendant_at?(child, child_world, target)
+      end)
+    end
+  end
+
+  defp unwrap_scene_root([%{name: "scene_root", children: children}]) when is_list(children),
+    do: children
+
+  defp unwrap_scene_root(nodes), do: nodes
+
+  defp wx_viewport_origin(:top, _w, _h, _h_split, _v_split), do: {0, 0}
+  defp wx_viewport_origin(:perspective, w, _h, h_split, _v_split), do: {w * h_split, 0}
+  defp wx_viewport_origin(:front, _w, h, _h_split, v_split), do: {0, h * (1.0 - v_split)}
+  defp wx_viewport_origin(:right, w, h, h_split, v_split), do: {w * h_split, h * (1.0 - v_split)}
 
   defp camera_for_viewport(state, :perspective), do: state.orbit
   defp camera_for_viewport(state, :top), do: state.cam_top

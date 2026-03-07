@@ -21,6 +21,11 @@ defmodule Lunity.Editor.HierarchyTree do
   @wx_tr_lines_at_root 0x0004
   @wx_tr_hide_root 0x0800
 
+  @hover_bg {200, 220, 240}
+  @hover_fg {0, 0, 0}
+  @select_bg {50, 100, 180}
+  @select_fg {255, 255, 255}
+
   @doc """
   Create the wxTreeCtrl as a child of `parent`. Stores the tree reference
   in the editor ETS state and connects selection events. Returns the widget.
@@ -63,6 +68,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp do_update_scene(tree, scene_root, scene) do
     :wxTreeCtrl.deleteChildren(tree, scene_root)
+    Process.put(:tree_name_map, %{})
 
     label =
       case State.get_scene_path() do
@@ -97,6 +103,8 @@ defmodule Lunity.Editor.HierarchyTree do
       item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
 
       :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
+      name_map = Process.get(:tree_name_map, %{})
+      Process.put(:tree_name_map, Map.put(name_map, name, item))
 
       children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
       Enum.each(children, fn child -> add_scene_node(tree, item, child) end)
@@ -180,7 +188,18 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def handle_selection(tree, item) do
     try do
+      prev_sel = Process.get(:tree_selected_item)
+      Process.put(:tree_selected_item, item)
+      if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
+
       case :wxTreeCtrl.getItemData(tree, item) do
+        {:scene_node, name} = data ->
+          set_item_style(tree, item, @select_bg, @select_fg)
+          Process.put(:tree_selected_item, item)
+          selection = resolve_scene_node_selection(name)
+          State.put_selection(selection)
+          data
+
         data when is_tuple(data) ->
           State.put_selection(data)
           data
@@ -195,6 +214,161 @@ defmodule Lunity.Editor.HierarchyTree do
         nil
     end
   end
+
+  defp resolve_scene_node_selection(name) do
+    case State.get_scene() do
+      nil ->
+        {:scene_node, name}
+
+      scene ->
+        case EAGL.Scene.find_node_with_transform(scene, name) do
+          {:ok, node, world} ->
+            aabb = Lunity.Editor.View.subtree_world_aabb(node, world)
+            {:scene_node, name, aabb}
+
+          nil ->
+            {:scene_node, name}
+        end
+    end
+  end
+
+  @doc """
+  Poll hover state by checking the global mouse position against the tree.
+  Returns `{:scene_node, name, aabb}` if hovering a scene node, or nil.
+  Also styles the hovered tree item with a warm highlight.
+  """
+  def poll_hover do
+    case State.get_tree() do
+      {tree, _, _, _} -> do_poll_hover(tree)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp do_poll_hover(tree) do
+    {gx, gy} = :wx_misc.getMousePosition()
+    {lx, ly} = :wxWindow.screenToClient(tree, {gx, gy})
+    {tw, th} = :wxWindow.getSize(tree)
+
+    prev_hover = Process.get(:tree_hover_item)
+
+    if lx >= 0 and ly >= 0 and lx < tw and ly < th do
+      {item, _flags} = :wxTreeCtrl.hitTest(tree, {lx, ly})
+
+      if item != 0 do
+        if prev_hover != nil and prev_hover != item, do: reset_item_style(tree, prev_hover)
+        sel_item = Process.get(:tree_selected_item)
+        if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
+        Process.put(:tree_hover_item, item)
+
+        case :wxTreeCtrl.getItemData(tree, item) do
+          {:scene_node, name} -> resolve_scene_node_hover(name)
+          _ -> nil
+        end
+      else
+        if prev_hover, do: reset_item_style(tree, prev_hover)
+        Process.put(:tree_hover_item, nil)
+        nil
+      end
+    else
+      if prev_hover, do: reset_item_style(tree, prev_hover)
+      Process.put(:tree_hover_item, nil)
+      nil
+    end
+  end
+
+  defp resolve_scene_node_hover(name) do
+    case State.get_scene() do
+      nil ->
+        nil
+
+      scene ->
+        case EAGL.Scene.find_node_with_transform(scene, name) do
+          {:ok, node, world} ->
+            aabb = Lunity.Editor.View.subtree_world_aabb(node, world)
+            if aabb, do: {:scene_node, name, aabb}
+
+          nil ->
+            nil
+        end
+    end
+  end
+
+  @doc """
+  Programmatically select a scene node in the tree by name (e.g. after a
+  viewport pick). Updates both the wxTreeCtrl visual selection and the
+  item styling.
+  """
+  def select_by_name(name) when is_binary(name) do
+    case State.get_tree() do
+      {tree, _, _, _} ->
+        name_map = Process.get(:tree_name_map, %{})
+
+        case Map.get(name_map, name) do
+          nil -> :ok
+          item ->
+            prev_sel = Process.get(:tree_selected_item)
+            Process.put(:tree_selected_item, item)
+            if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
+            set_item_style(tree, item, @select_bg, @select_fg)
+            :wxTreeCtrl.selectItem(tree, item)
+            :wxTreeCtrl.ensureVisible(tree, item)
+        end
+
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  def select_by_name(_), do: :ok
+
+  @doc """
+  Programmatically hover a scene node in the tree by name (e.g. from
+  viewport hover). Updates the tree item styling. Pass nil to clear.
+  """
+  def hover_by_name(name) when is_binary(name) do
+    case State.get_tree() do
+      {tree, _, _, _} ->
+        name_map = Process.get(:tree_name_map, %{})
+        prev_hover = Process.get(:tree_hover_item)
+
+        case Map.get(name_map, name) do
+          nil ->
+            if prev_hover, do: reset_item_style(tree, prev_hover)
+            Process.put(:tree_hover_item, nil)
+
+          item when item == prev_hover ->
+            :ok
+
+          item ->
+            if prev_hover, do: reset_item_style(tree, prev_hover)
+            sel_item = Process.get(:tree_selected_item)
+            if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
+            Process.put(:tree_hover_item, item)
+        end
+
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  def hover_by_name(nil) do
+    case State.get_tree() do
+      {tree, _, _, _} ->
+        prev_hover = Process.get(:tree_hover_item)
+        if prev_hover, do: reset_item_style(tree, prev_hover)
+        Process.put(:tree_hover_item, nil)
+
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  def hover_by_name(_), do: :ok
 
   @doc """
   Handle a tree item activation (double-click / Enter). Loads scenes or
@@ -257,5 +431,29 @@ defmodule Lunity.Editor.HierarchyTree do
     mod
     |> Module.split()
     |> List.last()
+  end
+
+  defp set_item_style(tree, item, {br, bg, bb}, {fr, fg, fb}) do
+    try do
+      :wxTreeCtrl.setItemBackgroundColour(tree, item, {br, bg, bb, 255})
+      :wxTreeCtrl.setItemTextColour(tree, item, {fr, fg, fb, 255})
+    rescue
+      _ -> :ok
+    end
+  end
+
+  defp reset_item_style(tree, item) do
+    try do
+      sel_item = Process.get(:tree_selected_item)
+
+      if item == sel_item do
+        set_item_style(tree, item, @select_bg, @select_fg)
+      else
+        :wxTreeCtrl.setItemBackgroundColour(tree, item, {255, 255, 255, 255})
+        :wxTreeCtrl.setItemTextColour(tree, item, {0, 0, 0, 255})
+      end
+    rescue
+      _ -> :ok
+    end
   end
 end

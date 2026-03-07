@@ -493,6 +493,20 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Store the currently hovered item (for viewport hover highlight)."
+  def put_hover(hover) do
+    :ets.insert(@table, {:hover, hover})
+    :ok
+  end
+
+  @doc "Get the current hover, or nil."
+  def get_hover do
+    case :ets.lookup(@table, :hover) do
+      [{:hover, h}] -> h
+      [] -> nil
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Window frame
   # ---------------------------------------------------------------------------
