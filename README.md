@@ -1,6 +1,13 @@
-# Lunity
+<div align="center">
+  <img src="assets/lunity_logo.png" alt="Lunity Logo" title="Lunity Logo" width="300">
+  <p>
+    A 3D Multiplayer Game Engine and Development Environment for Elxir, based on EAGL, NX and Luerl.
+  </p>
+</div>
 
-Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, ECSx integration, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
+# Overview
+
+Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, an Nx-backed component system with tensor and structured storage, game instance management, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
 
 ## Project structure
 
@@ -9,9 +16,12 @@ When Lunity is a dependency, your game's layout:
 ```
 lib/
   my_game/
+    manager.ex    # use Lunity.Manager (components, systems, tick loop)
     scenes/       # Scene modules (use Lunity.Scene)
     prefabs/      # Prefab modules (use Lunity.Prefab)
     entities/     # Entity modules (use Lunity.Entity)
+    components/   # Component modules (use Lunity.Component)
+    systems/      # System modules (use Lunity.System)
 priv/
   prefabs/
     *.glb         # Visual assets (referenced by prefab modules)
@@ -24,6 +34,230 @@ priv/
         prefabs/
           *.glb
 ```
+
+## Component system
+
+Lunity provides its own ECS component system built on Nx tensors and ETS. Components come in two storage flavours, both sharing a common API for individual entity access.
+
+### Tensor components
+
+Numeric data stored as Nx tensors in contiguous memory. Processed every tick by `defn` systems that operate on entire tensors at once -- no per-entity iteration loops. This runs on CPU today (via Nx.BinaryBackend or EXLA) and can target GPU (CUDA via EXLA) with zero code changes when deployed to servers with GPUs.
+
+```elixir
+defmodule MyGame.Components.Position do
+  use Lunity.Component,
+    storage: :tensor,
+    shape: {3},       # {x, y, z} per entity
+    dtype: :f32
+end
+
+defmodule MyGame.Components.Speed do
+  use Lunity.Component,
+    storage: :tensor,
+    shape: {},         # scalar per entity
+    dtype: :f32
+end
+```
+
+All tensor components share the same entity indexing. Row `i` of every tensor belongs to the same entity. The "zip" across multiple components is free -- just aligned memory access, no hash lookups.
+
+### Structured components
+
+Arbitrary Elixir terms stored in ETS. For variable-length or non-numeric data (inventories, names, quest state) that changes infrequently and is handled by event-driven code rather than tick processing.
+
+```elixir
+defmodule MyGame.Components.Inventory do
+  use Lunity.Component,
+    storage: :structured
+
+  # get/1, put/2, remove/1, exists?/1, all/0
+end
+
+defmodule MyGame.Components.PlayerName do
+  use Lunity.Component,
+    storage: :structured,
+    index: true          # enables search/1 for fast value-based lookup
+end
+```
+
+### Common API
+
+Both storage types implement:
+
+- `get(entity_id)` -- get a component value for an entity
+- `put(entity_id, value)` -- set a component value
+- `remove(entity_id)` -- remove a component from an entity
+- `exists?(entity_id)` -- check if an entity has this component
+
+Tensor components additionally expose:
+
+- `tensor()` -- returns the raw Nx tensor for batch processing
+- `put_tensor(t)` -- replaces the tensor (called by the system runner)
+
+Structured components additionally expose:
+
+- `all()` -- returns all `{entity_id, value}` pairs
+- `search(value)` -- returns entity IDs with the given value (requires `index: true`)
+
+### ComponentStore
+
+The `Lunity.ComponentStore` GenServer manages all component storage:
+
+- **Tensor storage**: Nx tensors held in an ETS table. Storing an Nx tensor in ETS copies only the small struct, not the underlying native memory buffer.
+- **Entity registry**: Maps symbolic entity IDs (`{"pong_1", :ball}`) to integer tensor indices and back. O(1) lookup in both directions.
+- **Structured storage**: Per-component ETS tables with optional index tables.
+- **Auto-growth**: Tensor capacity doubles automatically when entity count exceeds the current allocation.
+
+## Systems
+
+Systems process component data each tick. The `Lunity.System` behaviour supports tensor and structured types.
+
+### Tensor systems
+
+Declare which components they read and write. The framework reads the tensors, passes them as a map to the system's `defn run/1`, and writes the returned tensors back.
+
+```elixir
+defmodule MyGame.Systems.MoveBall do
+  use Lunity.System,
+    type: :tensor,
+    reads: [MyGame.Components.Position, MyGame.Components.Velocity],
+    writes: [MyGame.Components.Position]
+
+  import Nx.Defn
+
+  defn run(%{position: pos, velocity: vel}) do
+    %{position: Nx.add(pos, vel)}
+  end
+end
+```
+
+Map keys are derived from the component module name: `MyGame.Components.Position` becomes `:position`.
+
+Systems are instance-agnostic -- they process ALL entities across ALL game instances in one pass. This is correct because all instances run the same game. An entity with zero velocity simply doesn't move.
+
+### Structured systems
+
+A function mapped over each entity that has the declared components:
+
+```elixir
+defmodule MyGame.Systems.DecayBuffs do
+  use Lunity.System,
+    type: :structured,
+    reads: [MyGame.Components.ActiveBuffs],
+    writes: [MyGame.Components.ActiveBuffs]
+
+  def run(_entity_id, %{active_buffs: buffs}) do
+    %{active_buffs: Enum.reject(buffs, &expired?/1)}
+  end
+end
+```
+
+### Masking and conditional logic
+
+Not all entities have all components. Entities without a component have zero values in the tensor. Systems use `Nx.select` for conditional logic:
+
+```elixir
+defn run(%{position: pos, speed: speed, paddle_control: ctrl}) do
+  is_auto = Nx.equal(ctrl, 0)
+  has_speed = Nx.greater(speed, 0)
+  should_move = Nx.logical_and(is_auto, has_speed)
+  move = Nx.select(should_move, calculated_move, 0.0)
+  # ...
+end
+```
+
+## Manager
+
+The game defines a module that `use`s `Lunity.Manager`:
+
+```elixir
+defmodule MyGame.Manager do
+  use Lunity.Manager
+
+  @impl true
+  def components do
+    [
+      Lunity.Components.InstanceMembership,
+      MyGame.Components.Position,
+      MyGame.Components.Velocity
+    ]
+  end
+
+  @impl true
+  def systems do
+    [
+      MyGame.Systems.MoveBall,
+      MyGame.Systems.BounceWalls
+    ]
+  end
+
+  @impl true
+  def setup do
+    Lunity.Instance.start(MyGame.Scenes.Level1)
+  end
+
+  # Optional: default is 20
+  @impl true
+  def tick_rate, do: 30
+end
+```
+
+The manager starts the ComponentStore, registers all components, runs `setup/0`, and starts the tick loop calling each system in order.
+
+## Game instances
+
+A `Lunity.Instance` represents a running game. Multiple instances can run simultaneously -- each with its own entities in the shared component tensors.
+
+Entity IDs are scoped to instances: `{"pong_1", :ball}` vs `{"pong_2", :ball}`. Systems process all entities across all instances in one pass (the "zip" is free), and `Lunity.Components.InstanceMembership` (a structured component with an index) provides fast lookup of all entities in a specific instance.
+
+```elixir
+# Start a new game instance
+{:ok, _pid} = Lunity.Instance.start(MyGame.Scenes.Level1, id: "game_42")
+
+# List all active instances
+Lunity.Instance.list()  # => ["game_42", "game_43"]
+
+# Stop an instance (deallocates all its entities)
+Lunity.Instance.stop("game_42")
+```
+
+### GPU path
+
+Tensor components and `defn` systems run on Nx.BinaryBackend (CPU) during development. In production on a server with an NVIDIA GPU, switching to EXLA with CUDA runs the same `defn` code on GPU with massive parallelism -- no code changes needed. Since game clients render in the browser, the server GPU is free for compute.
+
+## Editor
+
+Run from your game project:
+
+```bash
+mix lunity.edit
+```
+
+This starts the Lunity editor with:
+
+- wxWidgets/OpenGL viewport with orbit camera
+- Scene hierarchy tree
+- Live game instance viewing
+- MCP server for agent-driven development (see below)
+- File watcher for auto-reload on changes to `priv/config/`, `priv/scenes/`, and `priv/prefabs/` (debounced 300ms). If `inotify-tools` is not installed (Linux/WSL2), the watcher logs a warning and continues without file watching.
+
+## MCP server
+
+Configure Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "lunity": {
+      "url": "http://localhost:4111/sse"
+    }
+  }
+}
+```
+
+Call **set_project** first with `cwd` (and optional `app`). Port 4111 (override with `LUNITY_HTTP_PORT`).
+
+**Tools**: `set_project`, `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
 
 ## Three DSLs
 
@@ -50,7 +284,7 @@ Scenes can nest other scenes (Godot-style composition). Sub-scene nodes are graf
 
 ### Entity DSL
 
-Entities define what things do -- game logic, ECSx components, and properties editable in the Lunity editor. Use `use Lunity.Entity` (optionally with `config: "path"` for default config relative to `priv/config/`):
+Entities define what things do -- game logic, components, and properties visible in the Lunity editor. Use `use Lunity.Entity` (optionally with `config: "path"` for default config relative to `priv/config/`):
 
 ```elixir
 defmodule MyGame.Player do
@@ -59,15 +293,12 @@ defmodule MyGame.Player do
   entity do
     property :health, :integer, default: 100, min: 0
     property :speed,  :float,   default: 5.0
-
-    component MyGame.Components.Health
-    component MyGame.Components.Movement
   end
 
   @impl Lunity.Entity
   def init(config, entity_id) do
-    ECSx.add(entity_id, MyGame.Components.Health, %{value: config.health})
-    ECSx.add(entity_id, MyGame.Components.Movement, %{speed: config.speed})
+    MyGame.Components.Position.put(entity_id, Map.get(config, :position, {0, 0, 0}))
+    MyGame.Components.Speed.put(entity_id, config.speed)
     :ok
   end
 end
@@ -119,7 +350,7 @@ A node can have:
 Prefab and entity properties occupy different domains:
 
 - **Prefab properties** -- visual/physical, intrinsic to the mesh, editable in Blender (colour, material, hinge offset). A prefab can be used by many entity types.
-- **Entity properties** -- game logic, specific to the entity type, editable in the Lunity editor (health, speed, side). Meaningless without the entity module.
+- **Entity properties** -- game logic, specific to the entity type, visible in the Lunity editor (health, speed, side). Meaningless without the entity module.
 
 When a node has both a prefab and an entity, their property schemas must not overlap. Lunity detects conflicts at load time and raises a clear error.
 
@@ -240,8 +471,7 @@ data:extend({
     properties = {
       { name = "health", type = "integer", default = 100, min = 0 },
       { name = "speed",  type = "float",   default = 5.0 }
-    },
-    components = { "MyGame.Components.Health", "MyGame.Components.Movement" }
+    }
   }
 })
 ```
@@ -287,30 +517,6 @@ config :lunity,
   mod_max_state_size: 10_000_000      # bytes limit for luerl state
 ```
 
-## File watcher (editor mode)
-
-In editor mode, Lunity watches `priv/config/`, `priv/scenes/`, and `priv/prefabs/` for file changes. When a change is detected the current scene is automatically reloaded with the camera position preserved. Changes are debounced (300ms). If `inotify-tools` is not installed (Linux/WSL2), the watcher logs a warning and continues without file watching.
-
-## MCP server
-
-### HTTP (default) - stdio breaks due to group leader issues
-
-Run from your game project: `mix lunity.edit`. Cursor config (`.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "lunity": {
-      "url": "http://localhost:4111/sse"
-    }
-  }
-}
-```
-
-Call **set_project** first with `cwd` (and optional `app`). Port 4111 (override with `LUNITY_HTTP_PORT`).
-
-**Tools**: `set_project`, `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
-
 ## Installation
 
 ```elixir
@@ -321,7 +527,7 @@ def deps do
 end
 ```
 
-Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering and [luerl](https://github.com/rvirding/luerl) for the Lua mod system.
+Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering, [Nx](https://github.com/elixir-nx/nx) for tensor-backed components, and [luerl](https://github.com/rvirding/luerl) for the Lua mod system.
 
 ## Coordinate system
 

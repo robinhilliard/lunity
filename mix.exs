@@ -14,7 +14,7 @@ defmodule Lunity.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :wx, :ecsx],
+      extra_applications: [:logger, :wx],
       mod: {Lunity.Application, []}
     ]
   end
@@ -23,7 +23,7 @@ defmodule Lunity.MixProject do
   defp deps do
     [
       {:eagl, "~> 0.13", path: "../eagl"},
-      {:ecsx, "~> 0.5"},
+      {:nx, "~> 0.9"},
       {:ex_mcp, "~> 0.7"},
       {:jason, "~> 1.4"},
       {:phoenix, "~> 1.7"},

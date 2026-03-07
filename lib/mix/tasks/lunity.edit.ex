@@ -36,7 +36,7 @@ defmodule Mix.Tasks.Lunity.Edit do
       }
 
   - Run from your game project directory
-  - ECSx and OpenGL context required for full tool functionality
+  - OpenGL context required for full tool functionality
   """
   use Mix.Task
 

@@ -1,6 +1,7 @@
 defmodule Lunity.Application do
   @moduledoc """
   Application callback for Lunity. When mode is :editor, starts the editor window.
+  Starts instance supervision infrastructure.
   Optionally starts the mod EventBus and loads mods when `:mods_enabled` is true.
   """
   use Application
@@ -12,7 +13,7 @@ defmodule Lunity.Application do
     if Application.get_env(:lunity, :mode) == :editor do
       start_editor()
     else
-      Supervisor.start_link(mod_children(), strategy: :one_for_one)
+      Supervisor.start_link(base_children() ++ mod_children(), strategy: :one_for_one)
     end
   end
 
@@ -21,7 +22,8 @@ defmodule Lunity.Application do
     init_project_context_from_mix()
 
     children =
-      mod_children() ++
+      base_children() ++
+        mod_children() ++
         [
           {Task,
            fn ->
@@ -32,6 +34,13 @@ defmodule Lunity.Application do
         ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
+  end
+
+  defp base_children do
+    [
+      {Registry, keys: :unique, name: Lunity.Instance.Registry},
+      {DynamicSupervisor, name: Lunity.Instance.Supervisor, strategy: :one_for_one}
+    ]
   end
 
   defp mod_children do

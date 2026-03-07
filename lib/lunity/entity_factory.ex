@@ -1,22 +1,21 @@
 defmodule Lunity.EntityFactory do
   @moduledoc """
-  Create node-less ECSx entities from config.
+  Create node-less entities from config.
 
   Config files return a list of component structs. EntityFactory creates an entity,
   adds each component, and returns the entity ID. Use for offscreen processes,
-  AI, inventory, spawn queues.
+  inventory, spawn queues.
 
-  ## Config format (Option B)
+  ## Config format
 
   Config returns structs directly. EntityFactory adds each via the struct's module.
 
       # priv/config/spawns/enemy_type_a.exs
-      alias MyGame.Components.{Movement, Health, AI}
+      alias MyGame.Components.{Movement, Health}
 
       [
         %Movement{x: 0, y: 0, vx: 1, vy: 0},
-        %Health{value: 100},
-        %AI{type: :patrol}
+        %Health{value: 100}
       ]
 
   ## Overrides
@@ -28,10 +27,6 @@ defmodule Lunity.EntityFactory do
         Lunity.EntityFactory.create_from_config("spawns/enemy_type_a", [
           %Health{value: 80}
         ])
-
-  ## ECSx
-
-  Requires ECSx to be running. The game adds ECSx to its supervision tree.
   """
 
   alias Lunity.ConfigLoader

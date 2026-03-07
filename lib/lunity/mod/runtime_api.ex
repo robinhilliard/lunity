@@ -3,10 +3,10 @@ defmodule Lunity.Mod.RuntimeAPI do
   Bridge between Lua runtime API calls and the Lunity engine.
 
   These functions are called from Lua via the injected `lunity.*` API.
-  They interact with ECSx components and the EAGL scene graph through
+  They interact with components and the EAGL scene graph through
   the editor state.
 
-  This is a thin adapter -- the actual game logic lives in ECSx systems
+  This is a thin adapter -- the actual game logic lives in Lunity systems
   and entity modules. Lua mods use this API to read/write entity properties
   and scene node transforms.
   """
@@ -35,7 +35,7 @@ defmodule Lunity.Mod.RuntimeAPI do
   """
   @spec entity_set(term(), String.t(), term()) :: :ok
   def entity_set(_entity_id, _property, _value) do
-    Logger.debug("entity_set: not yet wired to ECSx")
+    Logger.debug("entity_set: not yet wired to component store")
     :ok
   end
 
