@@ -1,4 +1,11 @@
-# Lunity
+<div align="center">
+  <img src="assets/lunity_logo.png" alt="Lunity Logo" title="Lunity Logo" width="300">
+  <p>
+    A 3D Multiplayer Game Engine and Development Environment for Elxir, based on EAGL, NX and Luerl.
+  </p>
+</div>
+
+# Overview
 
 Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, an Nx-backed component system with tensor and structured storage, game instance management, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
 
