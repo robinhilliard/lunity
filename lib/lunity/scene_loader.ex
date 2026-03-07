@@ -2,7 +2,7 @@ defmodule Lunity.SceneLoader do
   @moduledoc """
   Orchestrates scene loading: glTF, ConfigLoader, PrefabLoader, and entity init.
 
-  Single entry point for loading scenes with ECSx entity creation. Traverses
+  Single entry point for loading scenes with entity creation. Traverses
   nodes, resolves prefabs and entities, creates entities, and runs init.
 
   ## Prefab load order
@@ -22,7 +22,6 @@ defmodule Lunity.SceneLoader do
 
   ## Requirements
 
-  - ECSx must be running (game adds ECSx to supervision tree)
   - OpenGL context must be active (for glTF/prefab loading)
   """
 

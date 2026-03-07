@@ -19,7 +19,7 @@ defmodule Lunity.Scene.NodeDef do
 
   - `:name` - Node name (atom, required)
   - `:prefab` - Prefab ID to load (e.g. `"box"`)
-  - `:entity` - Entity module atom (e.g. `Pong.Paddle`) for ECSx integration
+  - `:entity` - Entity module atom (e.g. `Pong.Paddle`) for component integration
   - `:config` - Config path relative to `priv/config/` for entity defaults
   - `:properties` - Map of per-instance property values (merged with config; instance values win)
   - `:material` - `%Lunity.Material{}` struct, inline map, or `nil` for per-node material override
