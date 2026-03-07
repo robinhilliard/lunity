@@ -167,6 +167,7 @@ The game defines a module that `use`s `Lunity.Manager`:
 defmodule MyGame.Manager do
   use Lunity.Manager
 
+  @impl true
   def components do
     [
       Lunity.Components.InstanceMembership,
@@ -175,6 +176,7 @@ defmodule MyGame.Manager do
     ]
   end
 
+  @impl true
   def systems do
     [
       MyGame.Systems.MoveBall,
@@ -182,11 +184,13 @@ defmodule MyGame.Manager do
     ]
   end
 
+  @impl true
   def setup do
     Lunity.Instance.start(MyGame.Scenes.Level1)
   end
 
   # Optional: default is 20
+  @impl true
   def tick_rate, do: 30
 end
 ```
@@ -214,6 +218,40 @@ Lunity.Instance.stop("game_42")
 
 Tensor components and `defn` systems run on Nx.BinaryBackend (CPU) during development. In production on a server with an NVIDIA GPU, switching to EXLA with CUDA runs the same `defn` code on GPU with massive parallelism -- no code changes needed. Since game clients render in the browser, the server GPU is free for compute.
 
+## Editor
+
+Run from your game project:
+
+```bash
+mix lunity.edit
+```
+
+This starts the Lunity editor with:
+
+- wxWidgets/OpenGL viewport with orbit camera
+- Scene hierarchy tree
+- Live game instance viewing
+- MCP server for agent-driven development (see below)
+- File watcher for auto-reload on changes to `priv/config/`, `priv/scenes/`, and `priv/prefabs/` (debounced 300ms). If `inotify-tools` is not installed (Linux/WSL2), the watcher logs a warning and continues without file watching.
+
+## MCP server
+
+Configure Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "lunity": {
+      "url": "http://localhost:4111/sse"
+    }
+  }
+}
+```
+
+Call **set_project** first with `cwd` (and optional `app`). Port 4111 (override with `LUNITY_HTTP_PORT`).
+
+**Tools**: `set_project`, `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
+
 ## Three DSLs
 
 Lunity provides three parallel DSLs for defining scenes, entities, and prefabs. All use module atoms for references, giving go-to-definition, autocomplete, and undefined-module warnings in ElixirLS.
@@ -239,7 +277,7 @@ Scenes can nest other scenes (Godot-style composition). Sub-scene nodes are graf
 
 ### Entity DSL
 
-Entities define what things do -- game logic, components, and properties editable in the Lunity editor. Use `use Lunity.Entity` (optionally with `config: "path"` for default config relative to `priv/config/`):
+Entities define what things do -- game logic, components, and properties visible in the Lunity editor. Use `use Lunity.Entity` (optionally with `config: "path"` for default config relative to `priv/config/`):
 
 ```elixir
 defmodule MyGame.Player do
@@ -305,7 +343,7 @@ A node can have:
 Prefab and entity properties occupy different domains:
 
 - **Prefab properties** -- visual/physical, intrinsic to the mesh, editable in Blender (colour, material, hinge offset). A prefab can be used by many entity types.
-- **Entity properties** -- game logic, specific to the entity type, editable in the Lunity editor (health, speed, side). Meaningless without the entity module.
+- **Entity properties** -- game logic, specific to the entity type, visible in the Lunity editor (health, speed, side). Meaningless without the entity module.
 
 When a node has both a prefab and an entity, their property schemas must not overlap. Lunity detects conflicts at load time and raises a clear error.
 
@@ -471,30 +509,6 @@ config :lunity,
   mod_handler_timeout: 5_000,         # ms timeout for event handlers
   mod_max_state_size: 10_000_000      # bytes limit for luerl state
 ```
-
-## File watcher (editor mode)
-
-In editor mode, Lunity watches `priv/config/`, `priv/scenes/`, and `priv/prefabs/` for file changes. When a change is detected the current scene is automatically reloaded with the camera position preserved. Changes are debounced (300ms). If `inotify-tools` is not installed (Linux/WSL2), the watcher logs a warning and continues without file watching.
-
-## MCP server
-
-### HTTP (default) - stdio breaks due to group leader issues
-
-Run from your game project: `mix lunity.edit`. Cursor config (`.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "lunity": {
-      "url": "http://localhost:4111/sse"
-    }
-  }
-}
-```
-
-Call **set_project** first with `cwd` (and optional `app`). Port 4111 (override with `LUNITY_HTTP_PORT`).
-
-**Tools**: `set_project`, `project_structure`, `scene_load`, `scene_get_hierarchy`, `get_blender_extras_script`, `editor_get_context`, `editor_set_context`, `editor_push`, `editor_pop`, `editor_peek`, `view_list`, `view_capture`, `entity_list`, `entity_get`, `entity_at_screen`, `node_screen_bounds`, `camera_state`, `view_annotate`, `highlight_node`, `clear_annotations`, `pause`, `step`, `resume`, `entity_set`
 
 ## Installation
 
