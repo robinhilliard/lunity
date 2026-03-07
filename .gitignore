@@ -24,6 +24,3 @@ lunity-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
-
-# Runtime persistence files
-components.persistence

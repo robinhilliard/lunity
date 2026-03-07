@@ -58,8 +58,13 @@ defmodule Mix.Tasks.Lunity.Edit do
 
     log_file =
       case File.cwd() do
-        {:ok, cwd} -> Path.join(cwd, "lunity_edit.log")
-        _ -> "/tmp/lunity_edit.log"
+        {:ok, cwd} ->
+          dir = Path.join(cwd, "tmp")
+          File.mkdir_p(dir)
+          Path.join(dir, "lunity_edit.log")
+
+        _ ->
+          "/tmp/lunity_edit.log"
       end
 
     log = fn msg ->
@@ -150,8 +155,8 @@ defmodule Mix.Tasks.Lunity.Edit do
     e ->
       log_file =
         case File.cwd() do
-          {:ok, cwd} -> Path.join(cwd, "lunity_edit.log")
-          _ -> "lunity_edit.log"
+          {:ok, cwd} -> Path.join([cwd, "tmp", "lunity_edit.log"])
+          _ -> "/tmp/lunity_edit.log"
         end
 
       stack = Exception.format(:error, e, __STACKTRACE__)
