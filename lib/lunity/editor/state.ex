@@ -507,6 +507,58 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Store the name → tree item mapping built when the scene section is populated."
+  def put_tree_name_map(map) when is_map(map) do
+    :ets.insert(@table, {:tree_name_map, map})
+    :ok
+  end
+
+  @doc "Get the name → tree item mapping, defaulting to an empty map."
+  def get_tree_name_map do
+    case :ets.lookup(@table, :tree_name_map) do
+      [{:tree_name_map, map}] -> map
+      [] -> %{}
+    end
+  end
+
+  @doc "Store the currently selected wxTreeCtrl item handle."
+  def put_tree_selected_item(item) do
+    :ets.insert(@table, {:tree_selected_item, item})
+    :ok
+  end
+
+  @doc "Get the currently selected wxTreeCtrl item handle, or nil."
+  def get_tree_selected_item do
+    case :ets.lookup(@table, :tree_selected_item) do
+      [{:tree_selected_item, item}] -> item
+      [] -> nil
+    end
+  end
+
+  @doc "Store the currently hovered wxTreeCtrl item handle."
+  def put_tree_hover_item(item) do
+    :ets.insert(@table, {:tree_hover_item, item})
+    :ok
+  end
+
+  @doc "Get the currently hovered wxTreeCtrl item handle, or nil."
+  def get_tree_hover_item do
+    case :ets.lookup(@table, :tree_hover_item) do
+      [{:tree_hover_item, item}] -> item
+      [] -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Scene helpers
+  # ---------------------------------------------------------------------------
+
+  @doc "Strip the synthetic scene_root wrapper node if present."
+  def unwrap_scene_root([%{name: "scene_root", children: children}]) when is_list(children),
+    do: children
+
+  def unwrap_scene_root(nodes), do: nodes
+
   # ---------------------------------------------------------------------------
   # Window frame
   # ---------------------------------------------------------------------------

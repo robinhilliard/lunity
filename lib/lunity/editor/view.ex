@@ -57,8 +57,6 @@ defmodule Lunity.Editor.View do
 
   @impl true
   def setup do
-    State.init()
-
     with {:ok, program} <- GLTF.EAGL.create_pbr_shader() do
       orbit = EAGL.OrbitCamera.new()
 
@@ -451,7 +449,7 @@ defmodule Lunity.Editor.View do
   defp resolve_dsl_node(nil, _world), do: {nil, nil}
 
   defp resolve_dsl_node(scene, picked_world) do
-    dsl_roots = unwrap_scene_root(scene.root_nodes || [])
+    dsl_roots = State.unwrap_scene_root(scene.root_nodes || [])
 
     result =
       Enum.find_value(dsl_roots, fn root ->
@@ -477,11 +475,6 @@ defmodule Lunity.Editor.View do
       end)
     end
   end
-
-  defp unwrap_scene_root([%{name: "scene_root", children: children}]) when is_list(children),
-    do: children
-
-  defp unwrap_scene_root(nodes), do: nodes
 
   defp wx_viewport_origin(:top, _w, _h, _h_split, _v_split), do: {0, 0}
   defp wx_viewport_origin(:perspective, w, _h, h_split, _v_split), do: {w * h_split, 0}

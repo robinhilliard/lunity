@@ -68,7 +68,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp do_update_scene(tree, scene_root, scene) do
     :wxTreeCtrl.deleteChildren(tree, scene_root)
-    Process.put(:tree_name_map, %{})
+    State.put_tree_name_map(%{})
 
     label =
       case State.get_scene_path() do
@@ -78,7 +78,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
     :wxTreeCtrl.setItemText(tree, scene_root, String.to_charlist(label))
 
-    displayable_nodes = unwrap_scene_root(scene.root_nodes || [])
+    displayable_nodes = State.unwrap_scene_root(scene.root_nodes || [])
 
     Enum.each(displayable_nodes, fn node ->
       add_scene_node(tree, scene_root, node)
@@ -86,11 +86,6 @@ defmodule Lunity.Editor.HierarchyTree do
 
     :wxTreeCtrl.expand(tree, scene_root)
   end
-
-  defp unwrap_scene_root([%{name: "scene_root", children: children}]) when is_list(children),
-    do: children
-
-  defp unwrap_scene_root(nodes), do: nodes
 
   defp add_scene_node(tree, parent_item, node) do
     name = node.name || "(unnamed)"
@@ -103,8 +98,8 @@ defmodule Lunity.Editor.HierarchyTree do
       item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
 
       :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
-      name_map = Process.get(:tree_name_map, %{})
-      Process.put(:tree_name_map, Map.put(name_map, name, item))
+      name_map = State.get_tree_name_map()
+      State.put_tree_name_map(Map.put(name_map, name, item))
 
       children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
       Enum.each(children, fn child -> add_scene_node(tree, item, child) end)
@@ -188,14 +183,14 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def handle_selection(tree, item) do
     try do
-      prev_sel = Process.get(:tree_selected_item)
-      Process.put(:tree_selected_item, item)
+      prev_sel = State.get_tree_selected_item()
+      State.put_tree_selected_item(item)
       if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
 
       case :wxTreeCtrl.getItemData(tree, item) do
         {:scene_node, name} = data ->
           set_item_style(tree, item, @select_bg, @select_fg)
-          Process.put(:tree_selected_item, item)
+          State.put_tree_selected_item(item)
           selection = resolve_scene_node_selection(name)
           State.put_selection(selection)
           data
@@ -251,16 +246,16 @@ defmodule Lunity.Editor.HierarchyTree do
     {lx, ly} = :wxWindow.screenToClient(tree, {gx, gy})
     {tw, th} = :wxWindow.getSize(tree)
 
-    prev_hover = Process.get(:tree_hover_item)
+    prev_hover = State.get_tree_hover_item()
 
     if lx >= 0 and ly >= 0 and lx < tw and ly < th do
       {item, _flags} = :wxTreeCtrl.hitTest(tree, {lx, ly})
 
       if item != 0 do
         if prev_hover != nil and prev_hover != item, do: reset_item_style(tree, prev_hover)
-        sel_item = Process.get(:tree_selected_item)
+        sel_item = State.get_tree_selected_item()
         if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
-        Process.put(:tree_hover_item, item)
+        State.put_tree_hover_item(item)
 
         case :wxTreeCtrl.getItemData(tree, item) do
           {:scene_node, name} -> resolve_scene_node_hover(name)
@@ -268,12 +263,12 @@ defmodule Lunity.Editor.HierarchyTree do
         end
       else
         if prev_hover, do: reset_item_style(tree, prev_hover)
-        Process.put(:tree_hover_item, nil)
+        State.put_tree_hover_item(nil)
         nil
       end
     else
       if prev_hover, do: reset_item_style(tree, prev_hover)
-      Process.put(:tree_hover_item, nil)
+      State.put_tree_hover_item(nil)
       nil
     end
   end
@@ -303,13 +298,13 @@ defmodule Lunity.Editor.HierarchyTree do
   def select_by_name(name) when is_binary(name) do
     case State.get_tree() do
       {tree, _, _, _} ->
-        name_map = Process.get(:tree_name_map, %{})
+        name_map = State.get_tree_name_map()
 
         case Map.get(name_map, name) do
           nil -> :ok
           item ->
-            prev_sel = Process.get(:tree_selected_item)
-            Process.put(:tree_selected_item, item)
+            prev_sel = State.get_tree_selected_item()
+            State.put_tree_selected_item(item)
             if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
             set_item_style(tree, item, @select_bg, @select_fg)
             :wxTreeCtrl.selectItem(tree, item)
@@ -331,22 +326,22 @@ defmodule Lunity.Editor.HierarchyTree do
   def hover_by_name(name) when is_binary(name) do
     case State.get_tree() do
       {tree, _, _, _} ->
-        name_map = Process.get(:tree_name_map, %{})
-        prev_hover = Process.get(:tree_hover_item)
+        name_map = State.get_tree_name_map()
+        prev_hover = State.get_tree_hover_item()
 
         case Map.get(name_map, name) do
           nil ->
             if prev_hover, do: reset_item_style(tree, prev_hover)
-            Process.put(:tree_hover_item, nil)
+            State.put_tree_hover_item(nil)
 
           item when item == prev_hover ->
             :ok
 
           item ->
             if prev_hover, do: reset_item_style(tree, prev_hover)
-            sel_item = Process.get(:tree_selected_item)
+            sel_item = State.get_tree_selected_item()
             if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
-            Process.put(:tree_hover_item, item)
+            State.put_tree_hover_item(item)
         end
 
       _ -> :ok
@@ -358,9 +353,9 @@ defmodule Lunity.Editor.HierarchyTree do
   def hover_by_name(nil) do
     case State.get_tree() do
       {tree, _, _, _} ->
-        prev_hover = Process.get(:tree_hover_item)
+        prev_hover = State.get_tree_hover_item()
         if prev_hover, do: reset_item_style(tree, prev_hover)
-        Process.put(:tree_hover_item, nil)
+        State.put_tree_hover_item(nil)
 
       _ -> :ok
     end
@@ -444,7 +439,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp reset_item_style(tree, item) do
     try do
-      sel_item = Process.get(:tree_selected_item)
+      sel_item = State.get_tree_selected_item()
 
       if item == sel_item do
         set_item_style(tree, item, @select_bg, @select_fg)
