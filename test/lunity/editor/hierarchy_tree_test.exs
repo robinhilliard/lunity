@@ -58,7 +58,7 @@ defmodule Lunity.Editor.HierarchyTreeTest do
       assert suffix(light_node) == "[light]"
       assert suffix(camera_node) == "[camera]"
       assert suffix(mesh_node) == nil
-      assert suffix(group_node) == "[group]"
+      assert suffix(group_node) == nil
       assert suffix(empty_node) == nil
     end
 
@@ -66,8 +66,6 @@ defmodule Lunity.Editor.HierarchyTreeTest do
       cond do
         node.light != nil -> "[light]"
         node.camera != nil -> "[camera]"
-        node.mesh != nil -> nil
-        node.children != nil and node.children != [] -> "[group]"
         true -> nil
       end
     end

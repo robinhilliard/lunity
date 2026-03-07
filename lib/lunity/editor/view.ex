@@ -16,7 +16,9 @@ defmodule Lunity.Editor.View do
   use WX.Const
 
   import Bitwise
+  import EAGL.Math
   alias EAGL.Scene
+  alias EAGL.Node
   alias Lunity.Editor.State
   alias Lunity.Editor.HierarchyTree
   alias Lunity.PrefabLoader
@@ -137,12 +139,86 @@ defmodule Lunity.Editor.View do
       )
 
       case State.get_scene() do
-        %Scene{} = scene -> Scene.render(scene, view, proj)
-        nil -> :ok
+        %Scene{} = scene ->
+          Scene.render(scene, view, proj)
+          render_selection_highlight(scene, view, proj)
+
+        nil ->
+          :ok
       end
     end
 
     state
+  end
+
+  defp render_selection_highlight(scene, view, proj) do
+    with {:scene_node, name} <- State.get_selection(),
+         {:ok, node, world} <- Scene.find_node_with_transform(scene, name),
+         {min_pt, max_pt} <- subtree_world_aabb(node, world) do
+      :gl.useProgram(0)
+      EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
+    else
+      _ -> :ok
+    end
+  end
+
+  defp subtree_world_aabb(node, world_matrix) do
+    collect_mesh_aabbs_at(node, world_matrix)
+    |> case do
+      [] -> nil
+      aabbs -> Enum.reduce(aabbs, &merge_aabb/2)
+    end
+  end
+
+  defp collect_mesh_aabbs_at(node, world) do
+
+    own =
+      case Node.get_mesh(node) do
+        %{bounds: {min_pt, max_pt}} ->
+          [transform_aabb(min_pt, max_pt, world)]
+
+        _ ->
+          []
+      end
+
+    children_aabbs =
+      (node.children || [])
+      |> Enum.flat_map(fn child ->
+        child_local = Node.get_local_transform_matrix(child)
+        child_world = mat4_mul(world, child_local)
+        collect_mesh_aabbs_at(child, child_world)
+      end)
+
+    own ++ children_aabbs
+  end
+
+  defp transform_aabb({min_x, min_y, min_z}, {max_x, max_y, max_z}, world) do
+    corners = [
+      [{min_x, min_y, min_z}], [{max_x, min_y, min_z}],
+      [{min_x, max_y, min_z}], [{max_x, max_y, min_z}],
+      [{min_x, min_y, max_z}], [{max_x, min_y, max_z}],
+      [{min_x, max_y, max_z}], [{max_x, max_y, max_z}]
+    ]
+
+    transformed = Enum.map(corners, &mat4_transform_point(world, &1))
+    [{fx, fy, fz}] = hd(transformed)
+    rest = Enum.flat_map(tl(transformed), fn [{x, y, z}] -> [{x, y, z}] end)
+
+    {t_min, t_max} =
+      Enum.reduce(rest, {{fx, fy, fz}, {fx, fy, fz}}, fn {x, y, z},
+                                                          {{ax, ay, az}, {bx, by, bz}} ->
+        {{min(ax, x), min(ay, y), min(az, z)}, {max(bx, x), max(by, y), max(bz, z)}}
+      end)
+
+    {t_min, t_max}
+  end
+
+  defp merge_aabb({min_a, max_a}, {min_b, max_b}) do
+    {ax, ay, az} = min_a
+    {bx, by, bz} = min_b
+    {cx, cy, cz} = max_a
+    {dx, dy, dz} = max_b
+    {{min(ax, bx), min(ay, by), min(az, bz)}, {max(cx, dx), max(cy, dy), max(cz, dz)}}
   end
 
   defp camera_matrices(state, :perspective, vw, vh) do
@@ -245,6 +321,15 @@ defmodule Lunity.Editor.View do
   def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _point}}, state) do
     case State.get_tree() do
       {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
+      _ -> nil
+    end
+
+    {:ok, state}
+  end
+
+  def handle_event({:wx_event, {:wxTree, :command_tree_item_activated, item, _point}}, state) do
+    case State.get_tree() do
+      {tree, _, _, _} -> HierarchyTree.handle_activation(tree, item)
       _ -> nil
     end
 
@@ -637,8 +722,6 @@ defmodule Lunity.Editor.View do
 
     state
   end
-
-  defp clamp(val, min_val, max_val), do: max(min_val, min(max_val, val))
 
   @impl true
   def cleanup(%{program: p}) do

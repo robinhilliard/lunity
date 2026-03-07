@@ -38,6 +38,7 @@ defmodule Lunity.Editor.HierarchyTree do
     :wxTreeCtrl.expand(tree, project_root)
 
     :wxTreeCtrl.connect(tree, :command_tree_sel_changed)
+    :wxTreeCtrl.connect(tree, :command_tree_item_activated)
 
     State.put_tree(tree, root, scene_root, project_root)
 
@@ -110,8 +111,6 @@ defmodule Lunity.Editor.HierarchyTree do
     cond do
       node.light != nil -> "[light]"
       node.camera != nil -> "[camera]"
-      node.mesh != nil -> nil
-      node.children != nil and node.children != [] -> "[group]"
       true -> nil
     end
   end
@@ -189,6 +188,34 @@ defmodule Lunity.Editor.HierarchyTree do
       _ ->
         State.put_selection(nil)
         nil
+    end
+  end
+
+  @doc """
+  Handle a tree item activation (double-click / Enter). Loads scenes or
+  inspects prefabs from the Project section.
+  """
+  def handle_activation(tree, item) do
+    try do
+      case :wxTreeCtrl.getItemData(tree, item) do
+        {:project, :scene, mod} ->
+          State.put_load_command(mod)
+          :ok
+
+        {:project, :prefab, mod} ->
+          glb_id = if function_exported?(mod, :__glb_id__, 0), do: mod.__glb_id__(), else: nil
+
+          if glb_id do
+            State.put_load_prefab_command(glb_id)
+          end
+
+          :ok
+
+        _ ->
+          :ok
+      end
+    rescue
+      _ -> :ok
     end
   end
 
