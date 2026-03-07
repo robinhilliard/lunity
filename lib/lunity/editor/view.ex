@@ -78,7 +78,8 @@ defmodule Lunity.Editor.View do
         last_w: 1024.0,
         last_h: 768.0,
         tree_scene_path: nil,
-        tree_project_done: false
+        tree_project_done: false,
+        click_origin: nil
       }
 
       {:ok, state}
@@ -292,11 +293,13 @@ defmodule Lunity.Editor.View do
   end
 
   def handle_event({:mouse_down, x, y}, state) do
+    state = %{state | click_origin: {x, y}}
     state = handle_press(state, :left, x, y)
     {:ok, state}
   end
 
-  def handle_event({:mouse_up, _x, _y}, state) do
+  def handle_event({:mouse_up, x, y}, state) do
+    state = maybe_pick_at(state, x, y)
     state = handle_release(state, :left)
     {:ok, state}
   end
@@ -337,6 +340,60 @@ defmodule Lunity.Editor.View do
   end
 
   def handle_event(_event, state), do: {:ok, state}
+
+  # --- Click-to-select via GPU pick ---
+
+  @click_threshold 4
+
+  defp maybe_pick_at(%{click_origin: {ox, oy}} = state, x, y) do
+    if abs(x - ox) < @click_threshold and abs(y - oy) < @click_threshold do
+      do_viewport_pick(state, x, y)
+    else
+      state
+    end
+  end
+
+  defp maybe_pick_at(state, _x, _y), do: state
+
+  defp do_viewport_pick(state, x, y) do
+    scene = State.get_scene()
+    if scene == nil, do: throw(:no_scene)
+
+    w = state.last_w
+    h = state.last_h
+    vp_id = viewport_at(x, y, w, h, state.h_split, state.v_split)
+    camera = camera_for_viewport(state, vp_id)
+    rects = viewport_rects(w, h, state.h_split, state.v_split)
+    {vp_x, vp_y, vp_w, vp_h} = viewport_rect_for(rects, vp_id)
+
+    gl_x = trunc(x - vp_x)
+    gl_y = trunc(vp_h - (h - y - vp_y))
+
+    viewport = {trunc(vp_x), trunc(vp_y), trunc(vp_w), trunc(vp_h)}
+
+    case Scene.pick(scene, camera, viewport, gl_x, gl_y) do
+      {:ok, node, _world} ->
+        name = node.name
+        if name, do: State.put_selection({:scene_node, name})
+        state
+
+      nil ->
+        State.put_selection(nil)
+        state
+    end
+  catch
+    :no_scene -> state
+  end
+
+  defp camera_for_viewport(state, :perspective), do: state.orbit
+  defp camera_for_viewport(state, :top), do: state.cam_top
+  defp camera_for_viewport(state, :front), do: state.cam_front
+  defp camera_for_viewport(state, :right), do: state.cam_right
+
+  defp viewport_rect_for(rects, :top), do: rects.top_left
+  defp viewport_rect_for(rects, :perspective), do: rects.top_right
+  defp viewport_rect_for(rects, :front), do: rects.bottom_left
+  defp viewport_rect_for(rects, :right), do: rects.bottom_right
 
   # --- Input routing ---
 
