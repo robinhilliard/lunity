@@ -23,7 +23,11 @@ defmodule Lunity.Application do
     children =
       mod_children() ++
         [
-          {Task, fn -> Lunity.Editor.View.run() end},
+          {Task,
+           fn ->
+             Lunity.Editor.View.run()
+             System.stop(0)
+           end},
           Lunity.Editor.FileWatcher
         ]
 
