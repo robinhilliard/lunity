@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunity Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #1a1a2e; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #status {
+    position: fixed; top: 12px; left: 12px;
+    color: #8892b0; font-size: 13px;
+    pointer-events: none; z-index: 10;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
+  #status.error { color: #e74c3c; }
+  #status.connected { color: #64ffda; }
+</style>
+</head>
+<body>
+<div id="status">Connecting...</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.171.0",
+    "three/addons/": "https://esm.sh/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const statusEl = document.getElementById('status');
+
+function setStatus(msg, cls) {
+  statusEl.textContent = msg;
+  statusEl.className = cls || '';
+}
+
+// --- Three.js setup ---
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+scene.add(new THREE.AmbientLight(0x404060, 0.5));
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- GLB cache ---
+const glbCache = {};
+const loader = new GLTFLoader();
+
+function loadGLB(glbId) {
+  if (glbCache[glbId]) return glbCache[glbId];
+  const promise = new Promise((resolve, reject) => {
+    loader.load(`/assets/prefabs/${glbId}.glb`, gltf => resolve(gltf), undefined, reject);
+  });
+  glbCache[glbId] = promise;
+  return promise;
+}
+
+// --- Scene building ---
+async function buildScene(nodes) {
+  const toRemove = [];
+  scene.traverse(child => {
+    if (child.userData.sceneNode) toRemove.push(child);
+  });
+  toRemove.forEach(obj => obj.parent.remove(obj));
+
+  for (const nodeData of nodes) {
+    if (!nodeData.has_mesh || !nodeData.glb_id) continue;
+
+    try {
+      const gltf = await loadGLB(nodeData.glb_id);
+      const model = gltf.scene.clone();
+
+      // Apply the server-computed world matrix directly.
+      // This is the exact same matrix EAGL uses for rendering,
+      // so the result is guaranteed to match.
+      if (nodeData.world_matrix) {
+        model.matrixAutoUpdate = false;
+        model.matrix.fromArray(nodeData.world_matrix);
+      }
+
+      if (nodeData.material) {
+        const matOpts = {};
+        const [br, bg, bb] = nodeData.material.baseColor || [0.7, 0.7, 0.7];
+        matOpts.color = new THREE.Color(br, bg, bb);
+        matOpts.metalness = nodeData.material.metallic ?? 0.0;
+        matOpts.roughness = nodeData.material.roughness ?? 0.5;
+
+        const [er, eg, eb] = nodeData.material.emissive || [0, 0, 0];
+        if (er > 0 || eg > 0 || eb > 0) {
+          matOpts.emissive = new THREE.Color(er, eg, eb);
+          matOpts.emissiveIntensity = 1.0;
+        }
+
+        const overrideMat = new THREE.MeshStandardMaterial(matOpts);
+        model.traverse(child => {
+          if (child.isMesh) child.material = overrideMat;
+        });
+      }
+
+      if (nodeData.light && nodeData.light.type === 'point') {
+        const [lr, lg, lb] = nodeData.light.color || [1, 1, 1];
+        const pointLight = new THREE.PointLight(
+          new THREE.Color(lr, lg, lb),
+          nodeData.light.intensity || 1.0,
+          nodeData.light.range || 50
+        );
+        model.add(pointLight);
+      }
+
+      model.name = nodeData.name || '';
+      model.userData.sceneNode = true;
+      scene.add(model);
+    } catch (e) {
+      console.warn(`Failed to load GLB "${nodeData.glb_id}" for node "${nodeData.name}":`, e);
+    }
+  }
+}
+
+// --- Camera sync ---
+function applyCamera(camData) {
+  const [px, py, pz] = camData.position;
+  const [tx, ty, tz] = camData.target;
+
+  camera.position.set(px, py, pz);
+  camera.lookAt(tx, ty, tz);
+
+  if (camData.fov) camera.fov = camData.fov;
+  if (camData.near) camera.near = camData.near;
+  if (camData.far) camera.far = camData.far;
+  camera.updateProjectionMatrix();
+}
+
+// --- WebSocket ---
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = `${wsProto}//${location.host}/ws/viewer/websocket`;
+
+let ws = null;
+let reconnectTimer = null;
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    setStatus('Connected', 'connected');
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      switch (msg.type) {
+        case 'scene':
+          buildScene(msg.nodes).then(() => {
+            if (msg.camera) applyCamera(msg.camera);
+            setStatus(`Scene loaded: ${msg.nodes.length} nodes`, 'connected');
+          });
+          break;
+        case 'camera':
+          applyCamera(msg);
+          break;
+        case 'error':
+          setStatus(msg.message, 'error');
+          break;
+      }
+    } catch (e) {
+      console.error('Failed to parse message:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    setStatus('Disconnected — reconnecting...', 'error');
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+// --- Mouse input ---
+const canvas = renderer.domElement;
+let mouseDown = false;
+let middleDown = false;
+
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  if (e.button === 0) {
+    mouseDown = true;
+    send({ type: 'mouse_down' });
+  } else if (e.button === 1) {
+    middleDown = true;
+    send({ type: 'middle_down' });
+  }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (e.button === 0) {
+    mouseDown = false;
+    send({ type: 'mouse_up' });
+  } else if (e.button === 1) {
+    middleDown = false;
+    send({ type: 'middle_up' });
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (mouseDown || middleDown) {
+    send({ type: 'mouse_motion', x: e.clientX, y: e.clientY });
+  }
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? -1 : 1;
+  send({ type: 'scroll', delta: delta });
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// --- Render loop ---
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+
+connect();
+animate();
+</script>
+</body>
+</html>

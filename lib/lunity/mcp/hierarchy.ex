@@ -32,6 +32,7 @@ defmodule Lunity.MCP.Hierarchy do
   defp maybe_put(map, _key, nil, _fun), do: map
   defp maybe_put(map, key, value, fun) when not is_nil(value), do: Map.put(map, key, fun.(value))
 
+  defp vec3_to_list([{x, y, z}]), do: [x, y, z]
   defp vec3_to_list({x, y, z}), do: [x, y, z]
   defp vec3_to_list(other) when is_list(other), do: other
 end

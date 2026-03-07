@@ -25,6 +25,7 @@ defmodule Lunity.MixProject do
       {:eagl, "~> 0.13", path: "../eagl"},
       {:ecsx, "~> 0.5"},
       {:ex_mcp, "~> 0.7"},
+      {:jason, "~> 1.4"},
       {:phoenix, "~> 1.7"},
       {:bandit, "~> 1.0"},
       {:png, "~> 0.2"},

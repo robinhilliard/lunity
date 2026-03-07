@@ -285,6 +285,7 @@ defmodule Lunity.SceneLoader do
                 |> Map.put(:name, to_string(node_def.name))
                 |> maybe_apply_material(node_def)
                 |> maybe_apply_light(node_def)
+                |> maybe_store_glb_id(node_def)
 
               {child, entity_entities} =
                 if node_def.entity do
@@ -649,6 +650,17 @@ defmodule Lunity.SceneLoader do
 
   defp load_node_config(config_path, _properties) do
     ConfigLoader.load_config(config_path)
+  end
+
+  defp maybe_store_glb_id(node, %NodeDef{prefab: nil}), do: node
+
+  defp maybe_store_glb_id(node, %NodeDef{prefab: prefab_module}) do
+    case Lunity.Prefab.glb_id(prefab_module) do
+      nil -> node
+      glb_id ->
+        props = node.properties || %{}
+        %{node | properties: Map.put(props, "glb_id", glb_id)}
+    end
   end
 
   defp put_entity_id(node, entity_id) do
