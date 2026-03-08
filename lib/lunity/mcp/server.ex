@@ -426,6 +426,28 @@ defmodule Lunity.MCP.Server do
     })
   end
 
+  deftool "ecs_dump" do
+    meta do
+      name("ECS Dump")
+
+      description(
+        "Dump all allocated entities and their component values from the ComponentStore. Returns entity IDs, tensor indices, and component data. Optionally filter by component names."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        components: %{
+          type: "array",
+          items: %{type: "string"},
+          description:
+            "Optional list of component module names to include (e.g. ['Lunity.Components.Position']). Omit to dump all registered tensor components."
+        }
+      }
+    })
+  end
+
   # Apply project context from state (set via set_project tool) so Lunity.priv_dir etc. work
   defp apply_project_context(state) do
     if cwd = state[:project_cwd] do
@@ -851,6 +873,58 @@ defmodule Lunity.MCP.Server do
   defp do_handle_tool_call("entity_set", _args, state) do
     content = "entity_set requires entity_id, component, and value (map)."
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
+  defp do_handle_tool_call("ecs_dump", args, state) do
+    registry = :ets.tab2list(:lunity_entity_registry)
+
+    all_tensor_mods =
+      :ets.tab2list(:lunity_component_meta)
+      |> Enum.flat_map(fn {mod, opts} ->
+        if opts.storage == :tensor, do: [mod], else: []
+      end)
+
+    component_mods =
+      case args && Map.get(args, "components") do
+        list when is_list(list) and list != [] ->
+          requested = MapSet.new(list)
+
+          Enum.filter(all_tensor_mods, fn mod ->
+            MapSet.member?(requested, inspect(mod))
+          end)
+
+        _ ->
+          all_tensor_mods
+      end
+
+    entities =
+      Enum.map(registry, fn {entity_id, index} ->
+        components =
+          Map.new(component_mods, fn mod ->
+            val =
+              try do
+                Lunity.ComponentStore.get(mod, entity_id)
+              rescue
+                _ -> nil
+              end
+
+            formatted =
+              case val do
+                nil -> nil
+                t when is_tuple(t) -> Tuple.to_list(t)
+                n when is_number(n) -> n
+                other -> inspect(other)
+              end
+
+            {inspect(mod), formatted}
+          end)
+
+        %{id: inspect(entity_id), index: index, components: components}
+      end)
+      |> Enum.sort_by(& &1.index)
+
+    content = Jason.encode!(%{entity_count: length(entities), entities: entities})
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
   defp do_handle_tool_call(_tool_name, _args, state) do

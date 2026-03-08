@@ -270,7 +270,11 @@ defmodule Lunity.ComponentStore do
             size = Tuple.to_list(shape)
             start = [index | List.duplicate(0, length(size))]
             lengths = [1 | size]
-            Nx.slice(tensor, start, lengths) |> Nx.reshape(shape) |> Nx.to_flat_list() |> List.to_tuple()
+
+            Nx.slice(tensor, start, lengths)
+            |> Nx.reshape(shape)
+            |> Nx.to_flat_list()
+            |> List.to_tuple()
         end
     end
   end
@@ -292,7 +296,10 @@ defmodule Lunity.ComponentStore do
               _ -> [value]
             end
 
-          update = Nx.tensor(vals, type: opts.dtype) |> Nx.reshape(List.to_tuple([1 | Tuple.to_list(shape)]))
+          update =
+            Nx.tensor(vals, type: opts.dtype)
+            |> Nx.reshape(List.to_tuple([1 | Tuple.to_list(shape)]))
+
           indices = Nx.tensor([[index]])
           Nx.indexed_put(tensor, indices, update)
       end
@@ -316,7 +323,12 @@ defmodule Lunity.ComponentStore do
               Nx.indexed_put(tensor, Nx.tensor([index]), Nx.tensor(0, type: opts.dtype))
 
             shape ->
-              zeros = Nx.broadcast(Nx.tensor(0, type: opts.dtype), List.to_tuple([1 | Tuple.to_list(shape)]))
+              zeros =
+                Nx.broadcast(
+                  Nx.tensor(0, type: opts.dtype),
+                  List.to_tuple([1 | Tuple.to_list(shape)])
+                )
+
               Nx.indexed_put(tensor, Nx.tensor([[index]]), zeros)
           end
 

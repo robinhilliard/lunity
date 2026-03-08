@@ -1,8 +1,8 @@
 defmodule Lunity.Web.Router do
   use Plug.Router
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/viewer" do
     viewer_path = Application.app_dir(:lunity, "priv/static/viewer.html")
@@ -34,7 +34,7 @@ defmodule Lunity.Web.Router do
     end
   end
 
-  forward "/",
+  forward("/",
     to: ExMCP.HttpPlug,
     init_opts: [
       handler: Lunity.MCP.Server,
@@ -42,4 +42,5 @@ defmodule Lunity.Web.Router do
       sse_enabled: true,
       cors_enabled: true
     ]
+  )
 end

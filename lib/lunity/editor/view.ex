@@ -163,23 +163,26 @@ defmodule Lunity.Editor.View do
 
     case hover do
       {:scene_node, hname, {hmin, hmax}} ->
-        sel_name = case sel do
-          {:scene_node, n, _} -> n
-          _ -> nil
-        end
+        sel_name =
+          case sel do
+            {:scene_node, n, _} -> n
+            _ -> nil
+          end
 
         unless hname == sel_name do
           EAGL.Line.draw_aabb(hmin, hmax, view, proj, vec3(0.5, 0.4, 0.15))
         end
 
-      _ -> :ok
+      _ ->
+        :ok
     end
 
     case sel do
       {:scene_node, _name, {min_pt, max_pt}} ->
         EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
 
-      _ -> :ok
+      _ ->
+        :ok
     end
 
     :gl.enable(@gl_depth_test)
@@ -195,7 +198,6 @@ defmodule Lunity.Editor.View do
   end
 
   defp collect_mesh_aabbs_at(node, world) do
-
     own =
       case Node.get_mesh(node) do
         %{bounds: {min_pt, max_pt}} ->
@@ -218,10 +220,14 @@ defmodule Lunity.Editor.View do
 
   defp transform_aabb({min_x, min_y, min_z}, {max_x, max_y, max_z}, world) do
     corners = [
-      [{min_x, min_y, min_z}], [{max_x, min_y, min_z}],
-      [{min_x, max_y, min_z}], [{max_x, max_y, min_z}],
-      [{min_x, min_y, max_z}], [{max_x, min_y, max_z}],
-      [{min_x, max_y, max_z}], [{max_x, max_y, max_z}]
+      [{min_x, min_y, min_z}],
+      [{max_x, min_y, min_z}],
+      [{min_x, max_y, min_z}],
+      [{max_x, max_y, min_z}],
+      [{min_x, min_y, max_z}],
+      [{max_x, min_y, max_z}],
+      [{min_x, max_y, max_z}],
+      [{max_x, max_y, max_z}]
     ]
 
     transformed = Enum.map(corners, &mat4_transform_point(world, &1))
@@ -230,7 +236,7 @@ defmodule Lunity.Editor.View do
 
     {t_min, t_max} =
       Enum.reduce(rest, {{fx, fy, fz}, {fx, fy, fz}}, fn {x, y, z},
-                                                          {{ax, ay, az}, {bx, by, bz}} ->
+                                                         {{ax, ay, az}, {bx, by, bz}} ->
         {{min(ax, x), min(ay, y), min(az, z)}, {max(bx, x), max(by, y), max(bz, z)}}
       end)
 
@@ -412,7 +418,9 @@ defmodule Lunity.Editor.View do
 
       nil ->
         case HierarchyTree.poll_hover() do
-          {:scene_node, _, _} = hover -> State.put_hover(hover)
+          {:scene_node, _, _} = hover ->
+            State.put_hover(hover)
+
           _ ->
             State.put_hover(nil)
             HierarchyTree.hover_by_name(nil)
@@ -422,7 +430,9 @@ defmodule Lunity.Editor.View do
 
   defp update_hover(_state) do
     case HierarchyTree.poll_hover() do
-      {:scene_node, _, _} = hover -> State.put_hover(hover)
+      {:scene_node, _, _} = hover ->
+        State.put_hover(hover)
+
       _ ->
         State.put_hover(nil)
         HierarchyTree.hover_by_name(nil)
@@ -698,6 +708,14 @@ defmodule Lunity.Editor.View do
   end
 
   defp load_scene_and_apply(state, program, path, cwd, app) do
+    for {_node, entity_id} <- State.get_entities() do
+      try do
+        Lunity.ComponentStore.deallocate(entity_id)
+      rescue
+        _ -> :ok
+      end
+    end
+
     opts = [shader_program: program]
 
     opts =
@@ -917,6 +935,14 @@ defmodule Lunity.Editor.View do
   end
 
   defp activate_instance_view(state, program, instance_id, scene_module) do
+    for {_node, entity_id} <- State.get_entities() do
+      try do
+        Lunity.ComponentStore.deallocate(entity_id)
+      rescue
+        _ -> :ok
+      end
+    end
+
     opts = [shader_program: program, skip_entities: true]
 
     case SceneLoader.load_scene(scene_module, opts) do
@@ -932,12 +958,10 @@ defmodule Lunity.Editor.View do
             %{}
           end
 
-        pos_mod = find_position_component()
-
         State.set_scene(scene, inspect(scene_module), [], :scene)
         State.put_watching_instance(instance_id)
         State.put_instance_entity_map(entity_map)
-        if pos_mod, do: State.put_position_component(pos_mod)
+        State.put_position_component(Lunity.Components.Position)
         State.update_window_title()
 
         orbit = EAGL.OrbitCamera.fit_to_scene(scene)
@@ -955,22 +979,6 @@ defmodule Lunity.Editor.View do
       {:error, reason} ->
         IO.puts("Failed to load instance scene: #{inspect(reason)}")
         state
-    end
-  end
-
-  defp find_position_component do
-    try do
-      :ets.tab2list(:lunity_component_meta)
-      |> Enum.find_value(fn {module, opts} ->
-        name = Atom.to_string(module)
-
-        if String.ends_with?(name, ".Position") and
-             opts.storage == :tensor and opts.shape == {3} do
-          module
-        end
-      end)
-    rescue
-      _ -> nil
     end
   end
 

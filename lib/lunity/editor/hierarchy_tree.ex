@@ -64,8 +64,11 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def update_scene(scene) do
     case State.get_tree() do
-      nil -> :ok
-      {tree, _root, scene_root, _project_root, _instances_root} -> do_update_scene(tree, scene_root, scene)
+      nil ->
+        :ok
+
+      {tree, _root, scene_root, _project_root, _instances_root} ->
+        do_update_scene(tree, scene_root, scene)
     end
   end
 
@@ -138,10 +141,14 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def update_instances do
     case State.get_tree() do
-      nil -> :ok
+      nil ->
+        :ok
+
       {tree, _root, _scene_root, _project_root, instances_root} ->
         do_update_instances(tree, instances_root)
-      _ -> :ok
+
+      _ ->
+        :ok
     end
   end
 
@@ -182,10 +189,14 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def update_project do
     case State.get_tree() do
-      nil -> :ok
+      nil ->
+        :ok
+
       {tree, _root, _scene_root, project_root, _instances_root} ->
         do_update_project(tree, project_root)
-      _ -> :ok
+
+      _ ->
+        :ok
     end
   end
 
@@ -370,7 +381,9 @@ defmodule Lunity.Editor.HierarchyTree do
         name_map = State.get_tree_name_map()
 
         case Map.get(name_map, name) do
-          nil -> :ok
+          nil ->
+            :ok
+
           item ->
             prev_sel = State.get_tree_selected_item()
             State.put_tree_selected_item(item)
@@ -382,7 +395,8 @@ defmodule Lunity.Editor.HierarchyTree do
             :wxWindow.setFocus(tree)
         end
 
-      _ -> :ok
+      _ ->
+        :ok
     end
   rescue
     _ -> :ok
@@ -399,6 +413,7 @@ defmodule Lunity.Editor.HierarchyTree do
     case State.get_tree() do
       {tree, _, _, _, _} ->
         prev_sel = State.get_tree_selected_item()
+
         if prev_sel != nil do
           set_item_default_style(tree, prev_sel)
           :wxTreeCtrl.unselect(tree)
@@ -446,7 +461,8 @@ defmodule Lunity.Editor.HierarchyTree do
             State.put_tree_hover_item(item)
         end
 
-      _ -> :ok
+      _ ->
+        :ok
     end
   rescue
     _ -> :ok
@@ -459,7 +475,8 @@ defmodule Lunity.Editor.HierarchyTree do
         if prev_hover, do: reset_item_style(tree, prev_hover)
         State.put_tree_hover_item(nil)
 
-      _ -> :ok
+      _ ->
+        :ok
     end
   rescue
     _ -> :ok

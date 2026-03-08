@@ -169,28 +169,29 @@ defmodule Lunity.Instance do
   defp build_entity_config(%Lunity.Scene.NodeDef{} = node_def) do
     base = node_def.properties || %{}
 
-    base =
+    config =
+      if node_def.entity && function_exported?(node_def.entity, :__property_spec__, 0) do
+        try do
+          result = Lunity.Entity.from_config(node_def.entity, base)
+          if is_struct(result), do: Map.from_struct(result), else: result
+        rescue
+          _ -> base
+        end
+      else
+        base
+      end
+
+    config =
       if node_def.position do
-        Map.put(base, :position, node_def.position)
+        Map.put(config, :position, node_def.position)
       else
-        base
+        config
       end
 
-    base =
-      if node_def.scale do
-        Map.put(base, :scale, node_def.scale)
-      else
-        base
-      end
-
-    if node_def.entity && function_exported?(node_def.entity, :__property_spec__, 0) do
-      try do
-        Lunity.Entity.from_config(node_def.entity, base)
-      rescue
-        _ -> base
-      end
+    if node_def.scale do
+      Map.put(config, :scale, node_def.scale)
     else
-      base
+      config
     end
   end
 end

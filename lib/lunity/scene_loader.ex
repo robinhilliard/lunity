@@ -384,7 +384,7 @@ defmodule Lunity.SceneLoader do
     %{node | light: Lunity.Light.to_eagl_light(light_struct)}
   end
 
-  defp init_entity_from_def(%NodeDef{entity: entity_module}, merged_config)
+  defp init_entity_from_def(%NodeDef{entity: entity_module} = node_def, merged_config)
        when is_atom(entity_module) and entity_module != nil do
     config_path = Entity.config_path(entity_module)
 
@@ -404,19 +404,30 @@ defmodule Lunity.SceneLoader do
         merged_config
       end
 
+    full_config =
+      if is_map(full_config) do
+        full_config
+      else
+        if is_list(full_config), do: Map.new(full_config), else: %{}
+      end
+
     entity_id = generate_entity_id()
 
-    struct_config =
+    config =
       if function_exported?(entity_module, :__property_spec__, 0) do
-        Entity.from_config(
-          entity_module,
-          if(is_list(full_config), do: Map.new(full_config), else: full_config)
-        )
+        result = Entity.from_config(entity_module, full_config)
+        if is_struct(result), do: Map.from_struct(result), else: result
       else
         full_config
       end
 
-    case entity_module.init(struct_config, entity_id) do
+    config =
+      if node_def.position, do: Map.put(config, :position, node_def.position), else: config
+
+    config =
+      if node_def.scale, do: Map.put(config, :scale, node_def.scale), else: config
+
+    case entity_module.init(config, entity_id) do
       :ok -> {:ok, entity_id}
       {:error, _} = err -> err
     end
@@ -655,7 +666,9 @@ defmodule Lunity.SceneLoader do
 
   defp maybe_store_glb_id(node, %NodeDef{prefab: prefab_module}) do
     case Lunity.Prefab.glb_id(prefab_module) do
-      nil -> node
+      nil ->
+        node
+
       glb_id ->
         props = node.properties || %{}
         %{node | properties: Map.put(props, "glb_id", glb_id)}

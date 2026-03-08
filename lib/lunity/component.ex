@@ -123,7 +123,8 @@ defmodule Lunity.Component do
         end
 
       other ->
-        raise ArgumentError, "Invalid storage type: #{inspect(other)}. Use :tensor or :structured."
+        raise ArgumentError,
+              "Invalid storage type: #{inspect(other)}. Use :tensor or :structured."
     end
   end
 end

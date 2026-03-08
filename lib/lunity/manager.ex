@@ -76,7 +76,17 @@ defmodule Lunity.Manager do
 
       @impl true
       def handle_info(:tick, state) do
-        Lunity.TickRunner.tick(state.systems)
+        cond do
+          not Lunity.Editor.State.get_game_paused() ->
+            Lunity.TickRunner.tick(state.systems)
+
+          Lunity.Editor.State.take_step_request() ->
+            Lunity.TickRunner.tick(state.systems)
+
+          true ->
+            :ok
+        end
+
         {:noreply, state}
       end
     end
