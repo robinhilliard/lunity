@@ -16,10 +16,58 @@
   }
   #status.error { color: #e74c3c; }
   #status.connected { color: #64ffda; }
+
+  #instance-panel {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    background: rgba(26, 26, 46, 0.9);
+    border: 1px solid rgba(100, 255, 218, 0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: #ccd6f6;
+    font-size: 13px;
+    min-width: 160px;
+    backdrop-filter: blur(8px);
+  }
+  #instance-panel h3 {
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64ffda;
+  }
+  #instance-list {
+    list-style: none;
+  }
+  #instance-list li {
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 2px;
+  }
+  #instance-list li:hover {
+    background: rgba(100, 255, 218, 0.1);
+  }
+  #instance-list li.active {
+    background: rgba(100, 255, 218, 0.2);
+    color: #64ffda;
+  }
+  #instance-list .empty {
+    color: #5a6380;
+    font-style: italic;
+    cursor: default;
+  }
+  #instance-list .empty:hover {
+    background: none;
+  }
 </style>
 </head>
 <body>
 <div id="status">Connecting...</div>
+<div id="instance-panel">
+  <h3>Game Instances</h3>
+  <ul id="instance-list"><li class="empty">None running</li></ul>
+</div>
 <script type="importmap">
 {
   "imports": {
@@ -33,6 +81,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const statusEl = document.getElementById('status');
+const instanceListEl = document.getElementById('instance-list');
 
 function setStatus(msg, cls) {
   statusEl.textContent = msg;
@@ -78,12 +127,16 @@ function loadGLB(glbId) {
 }
 
 // --- Scene building ---
+const nodesByName = {};
+
 async function buildScene(nodes) {
   const toRemove = [];
   scene.traverse(child => {
     if (child.userData.sceneNode) toRemove.push(child);
   });
   toRemove.forEach(obj => obj.parent.remove(obj));
+
+  for (const key in nodesByName) delete nodesByName[key];
 
   for (const nodeData of nodes) {
     if (!nodeData.has_mesh || !nodeData.glb_id) continue;
@@ -92,9 +145,6 @@ async function buildScene(nodes) {
       const gltf = await loadGLB(nodeData.glb_id);
       const model = gltf.scene.clone();
 
-      // Apply the server-computed world matrix directly.
-      // This is the exact same matrix EAGL uses for rendering,
-      // so the result is guaranteed to match.
       if (nodeData.world_matrix) {
         model.matrixAutoUpdate = false;
         model.matrix.fromArray(nodeData.world_matrix);
@@ -129,12 +179,27 @@ async function buildScene(nodes) {
         model.add(pointLight);
       }
 
-      model.name = nodeData.name || '';
+      const name = nodeData.name || '';
+      model.name = name;
       model.userData.sceneNode = true;
       scene.add(model);
+
+      if (name) nodesByName[name] = model;
     } catch (e) {
       console.warn(`Failed to load GLB "${nodeData.glb_id}" for node "${nodeData.name}":`, e);
     }
+  }
+}
+
+// --- ECS position updates ---
+function applyEcsUpdate(positions) {
+  for (const [name, pos] of Object.entries(positions)) {
+    const obj = nodesByName[name];
+    if (!obj) continue;
+    const [x, y, z] = pos;
+    obj.matrix.elements[12] = x;
+    obj.matrix.elements[13] = y;
+    obj.matrix.elements[14] = z;
   }
 }
 
@@ -152,12 +217,46 @@ function applyCamera(camData) {
   camera.updateProjectionMatrix();
 }
 
+// --- Instance panel ---
+let watchingId = null;
+
+function updateInstanceList(ids) {
+  instanceListEl.innerHTML = '';
+  if (ids.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'None running';
+    instanceListEl.appendChild(li);
+    return;
+  }
+
+  for (const id of ids) {
+    const li = document.createElement('li');
+    li.textContent = id;
+    if (id === watchingId) li.className = 'active';
+    li.addEventListener('click', () => {
+      if (watchingId === id) {
+        send({ type: 'unwatch' });
+        watchingId = null;
+        setStatus('Unwatched instance', 'connected');
+      } else {
+        watchingId = id;
+        send({ type: 'watch', instance_id: id });
+        setStatus(`Watching ${id}...`, 'connected');
+      }
+      updateInstanceList(ids);
+    });
+    instanceListEl.appendChild(li);
+  }
+}
+
 // --- WebSocket ---
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${wsProto}//${location.host}/ws/viewer/websocket`;
 
 let ws = null;
 let reconnectTimer = null;
+let knownInstances = [];
 
 function connect() {
   ws = new WebSocket(wsUrl);
@@ -168,6 +267,7 @@ function connect() {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    send({ type: 'list_instances' });
   };
 
   ws.onmessage = (event) => {
@@ -177,11 +277,25 @@ function connect() {
         case 'scene':
           buildScene(msg.nodes).then(() => {
             if (msg.camera) applyCamera(msg.camera);
-            setStatus(`Scene loaded: ${msg.nodes.length} nodes`, 'connected');
+            const label = watchingId ? `Watching ${watchingId}` : 'Scene loaded';
+            setStatus(`${label}: ${msg.nodes.length} nodes`, 'connected');
           });
           break;
         case 'camera':
           applyCamera(msg);
+          break;
+        case 'instances':
+          knownInstances = msg.ids || [];
+          updateInstanceList(knownInstances);
+          if (!watchingId && knownInstances.length > 0) {
+            watchingId = knownInstances[0];
+            send({ type: 'watch', instance_id: watchingId });
+            updateInstanceList(knownInstances);
+            setStatus(`Watching ${watchingId}...`, 'connected');
+          }
+          break;
+        case 'ecs_update':
+          applyEcsUpdate(msg.positions);
           break;
         case 'error':
           setStatus(msg.message, 'error');
@@ -194,6 +308,7 @@ function connect() {
 
   ws.onclose = () => {
     setStatus('Disconnected — reconnecting...', 'error');
+    watchingId = null;
     reconnectTimer = setTimeout(connect, 2000);
   };
 

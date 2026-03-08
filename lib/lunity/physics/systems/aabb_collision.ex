@@ -22,16 +22,6 @@ defmodule Lunity.Physics.Systems.AABBCollision do
 
   def run(inputs) do
     presence = Lunity.ComponentStore.get_presence_mask(Lunity.Physics.Components.BoxCollider)
-    result = Lunity.Physics.Collision.AABB.check_and_respond(Map.put(inputs, :presence, presence))
-
-    pos_diff = Nx.subtract(result.position, inputs.position)
-    max_change = Nx.reduce_max(Nx.abs(pos_diff)) |> Nx.to_number()
-    if max_change > 0.001, do: IO.puts("[AABB] collision push: #{max_change}")
-
-    vel_diff = Nx.subtract(result.velocity, inputs.velocity)
-    max_vel_change = Nx.reduce_max(Nx.abs(vel_diff)) |> Nx.to_number()
-    if max_vel_change > 0.001, do: IO.puts("[AABB] velocity change: #{max_vel_change}")
-
-    result
+    Lunity.Physics.Collision.AABB.check_and_respond(Map.put(inputs, :presence, presence))
   end
 end
