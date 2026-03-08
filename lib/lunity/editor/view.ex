@@ -391,6 +391,7 @@ defmodule Lunity.Editor.View do
 
       nil ->
         State.put_selection(nil)
+        HierarchyTree.select_by_name(nil)
         state
     end
   end
@@ -857,7 +858,7 @@ defmodule Lunity.Editor.View do
             viewport = {0, 0, trunc(w), trunc(h)}
 
             case Scene.pick(scene, orbit, viewport, x, y) do
-              {:ok, node} ->
+              {:ok, node, _world} ->
                 entity_id = (node.properties || %{})["entity_id"]
                 State.put_pick_result({:ok, node, entity_id})
 

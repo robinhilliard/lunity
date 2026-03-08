@@ -35,9 +35,15 @@ defmodule Lunity.Editor.HierarchyTree do
     tree = :wxTreeCtrl.new(parent, style: style)
     :wxWindow.setMinSize(tree, {@tree_width, -1})
 
+    # Force white background and black text so tree is readable on macOS dark mode
+    :wxWindow.setBackgroundColour(tree, {255, 255, 255})
+    :wxWindow.setForegroundColour(tree, {0, 0, 0})
+
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
     scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Scene: (no scene)")
     project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
+    set_item_default_style(tree, scene_root)
+    set_item_default_style(tree, project_root)
 
     :wxTreeCtrl.expand(tree, scene_root)
     :wxTreeCtrl.expand(tree, project_root)
@@ -96,6 +102,7 @@ defmodule Lunity.Editor.HierarchyTree do
       suffix = node_type_suffix(node)
       label = if suffix, do: "#{name}  #{suffix}", else: "#{name}"
       item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
+      set_item_default_style(tree, item)
 
       :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
       name_map = State.get_tree_name_map()
@@ -140,10 +147,12 @@ defmodule Lunity.Editor.HierarchyTree do
 
     if entities != [] do
       ent_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Entities")
+      set_item_default_style(tree, ent_item)
 
       Enum.each(entities, fn mod ->
         name = short_module_name(mod)
         item = :wxTreeCtrl.appendItem(tree, ent_item, String.to_charlist(name))
+        set_item_default_style(tree, item)
         :wxTreeCtrl.setItemData(tree, item, {:project, :entity, mod})
       end)
 
@@ -152,10 +161,12 @@ defmodule Lunity.Editor.HierarchyTree do
 
     if prefabs != [] do
       pref_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Prefabs")
+      set_item_default_style(tree, pref_item)
 
       Enum.each(prefabs, fn mod ->
         name = short_module_name(mod)
         item = :wxTreeCtrl.appendItem(tree, pref_item, String.to_charlist(name))
+        set_item_default_style(tree, item)
         :wxTreeCtrl.setItemData(tree, item, {:project, :prefab, mod})
       end)
 
@@ -164,10 +175,12 @@ defmodule Lunity.Editor.HierarchyTree do
 
     if scenes != [] do
       sc_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Scenes")
+      set_item_default_style(tree, sc_item)
 
       Enum.each(scenes, fn mod ->
         name = short_module_name(mod)
         item = :wxTreeCtrl.appendItem(tree, sc_item, String.to_charlist(name))
+        set_item_default_style(tree, item)
         :wxTreeCtrl.setItemData(tree, item, {:project, :scene, mod})
       end)
 
@@ -309,6 +322,8 @@ defmodule Lunity.Editor.HierarchyTree do
             set_item_style(tree, item, @select_bg, @select_fg)
             :wxTreeCtrl.selectItem(tree, item)
             :wxTreeCtrl.ensureVisible(tree, item)
+            # Give tree focus so selection shows blue (macOS uses gray when unfocused)
+            :wxWindow.setFocus(tree)
         end
 
       _ -> :ok
@@ -317,7 +332,38 @@ defmodule Lunity.Editor.HierarchyTree do
     _ -> :ok
   end
 
+  def select_by_name(nil), do: clear_selection()
   def select_by_name(_), do: :ok
+
+  @doc """
+  Clear the tree selection (e.g. when deselecting from viewport).
+  Resets the previously selected item to default styling (white bg, black text).
+  """
+  def clear_selection do
+    case State.get_tree() do
+      {tree, _, _, _} ->
+        prev_sel = State.get_tree_selected_item()
+        if prev_sel != nil do
+          set_item_default_style(tree, prev_sel)
+          :wxTreeCtrl.unselect(tree)
+          State.put_tree_selected_item(nil)
+        end
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp set_item_default_style(tree, item) do
+    try do
+      :wxTreeCtrl.setItemBackgroundColour(tree, item, {255, 255, 255, 255})
+      :wxTreeCtrl.setItemTextColour(tree, item, {0, 0, 0, 255})
+    rescue
+      _ -> :ok
+    end
+  end
 
   @doc """
   Programmatically hover a scene node in the tree by name (e.g. from
@@ -444,8 +490,7 @@ defmodule Lunity.Editor.HierarchyTree do
       if item == sel_item do
         set_item_style(tree, item, @select_bg, @select_fg)
       else
-        :wxTreeCtrl.setItemBackgroundColour(tree, item, {255, 255, 255, 255})
-        :wxTreeCtrl.setItemTextColour(tree, item, {0, 0, 0, 255})
+        set_item_default_style(tree, item)
       end
     rescue
       _ -> :ok

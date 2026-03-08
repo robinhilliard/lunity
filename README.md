@@ -529,6 +529,30 @@ end
 
 Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering, [Nx](https://github.com/elixir-nx/nx) for tensor-backed components, and [luerl](https://github.com/rvirding/luerl) for the Lua mod system.
 
+### Requirements
+
+Erlang/OTP 25+ with wx support, Elixir 1.17+, and OpenGL 3.3+. The `.tool-versions` is set to `system` — each platform uses its package manager.
+
+#### macOS
+
+Use Homebrew for Erlang and Elixir. Do **not** use asdf-installed Erlang — it links against wxWidgets at build time and breaks when Homebrew upgrades wxWidgets.
+
+```bash
+brew install erlang elixir
+```
+
+Verify: `elixir --version` should show matching OTP versions (e.g. "compiled with Erlang/OTP 26" when running OTP 26). Mismatched versions cause `nif_not_loaded` errors on `:gl.*` calls. See [EAGL README — Installing Erlang and Elixir on macOS](https://github.com/robinhilliard/eagl#installing-erlang-and-elixir-on-macos) for details and alternatives.
+
+**Cursor/ElixirLS**: If ElixirLS shows "Failed to run elixir check command", launch Cursor from the terminal (`cursor .`) so it inherits your shell PATH.
+
+#### Linux / WSL2
+
+```bash
+sudo apt install erlang elixir libgl1-mesa-dev libglu1-mesa-dev inotify-tools
+```
+
+`inotify-tools` is needed for file watching (auto-reload on changes). WSL2 works for development but OpenGL runs through a software layer — expect lower frame rates and input lag.
+
 ## Coordinate system
 
 Right-handed XYZ, Y up. Horizon plane is XZ.
