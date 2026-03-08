@@ -42,16 +42,19 @@ defmodule Lunity.Editor.HierarchyTree do
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
     scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Scene: (no scene)")
     project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
+    instances_root = :wxTreeCtrl.appendItem(tree, root, ~c"Game Instances")
     set_item_default_style(tree, scene_root)
     set_item_default_style(tree, project_root)
+    set_item_default_style(tree, instances_root)
 
     :wxTreeCtrl.expand(tree, scene_root)
     :wxTreeCtrl.expand(tree, project_root)
+    :wxTreeCtrl.expand(tree, instances_root)
 
     :wxTreeCtrl.connect(tree, :command_tree_sel_changed)
     :wxTreeCtrl.connect(tree, :command_tree_item_activated)
 
-    State.put_tree(tree, root, scene_root, project_root)
+    State.put_tree(tree, root, scene_root, project_root, instances_root)
 
     tree
   end
@@ -62,7 +65,7 @@ defmodule Lunity.Editor.HierarchyTree do
   def update_scene(scene) do
     case State.get_tree() do
       nil -> :ok
-      {tree, _root, scene_root, _project_root} -> do_update_scene(tree, scene_root, scene)
+      {tree, _root, scene_root, _project_root, _instances_root} -> do_update_scene(tree, scene_root, scene)
     end
   end
 
@@ -131,12 +134,58 @@ defmodule Lunity.Editor.HierarchyTree do
   end
 
   @doc """
+  Rebuild the Game Instances section from running Lunity.Instance processes.
+  """
+  def update_instances do
+    case State.get_tree() do
+      nil -> :ok
+      {tree, _root, _scene_root, _project_root, instances_root} ->
+        do_update_instances(tree, instances_root)
+      _ -> :ok
+    end
+  end
+
+  defp do_update_instances(tree, instances_root) do
+    :wxTreeCtrl.deleteChildren(tree, instances_root)
+
+    instances =
+      try do
+        for id <- Lunity.Instance.list() do
+          case Lunity.Instance.get(id) do
+            %{scene_module: mod} -> {id, mod}
+            _ -> nil
+          end
+        end
+        |> Enum.reject(&is_nil/1)
+      rescue
+        _ -> []
+      end
+
+    if instances == [] do
+      item = :wxTreeCtrl.appendItem(tree, instances_root, ~c"(no instances)")
+      set_item_default_style(tree, item)
+    else
+      Enum.each(instances, fn {instance_id, scene_module} ->
+        short = scene_module |> Module.split() |> List.last()
+        label = "#{instance_id}  [#{short}]"
+        item = :wxTreeCtrl.appendItem(tree, instances_root, String.to_charlist(label))
+        set_item_default_style(tree, item)
+        :wxTreeCtrl.setItemData(tree, item, {:game_instance, instance_id, scene_module})
+      end)
+    end
+
+    :wxTreeCtrl.expand(tree, instances_root)
+  end
+
+  @doc """
   Populate the Project section by discovering loaded modules.
   """
   def update_project do
     case State.get_tree() do
       nil -> :ok
-      {tree, _root, _scene_root, project_root} -> do_update_project(tree, project_root)
+      {tree, _root, _scene_root, project_root, _instances_root} ->
+        do_update_project(tree, project_root)
+      _ -> :ok
     end
   end
 
@@ -208,6 +257,13 @@ defmodule Lunity.Editor.HierarchyTree do
           State.put_selection(selection)
           data
 
+        {:game_instance, instance_id, scene_module} = data ->
+          set_item_style(tree, item, @select_bg, @select_fg)
+          State.put_tree_selected_item(item)
+          State.put_watch_command({:watch, instance_id, scene_module})
+          State.put_selection(data)
+          data
+
         data when is_tuple(data) ->
           State.put_selection(data)
           data
@@ -247,7 +303,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def poll_hover do
     case State.get_tree() do
-      {tree, _, _, _} -> do_poll_hover(tree)
+      {tree, _, _, _, _} -> do_poll_hover(tree)
       _ -> nil
     end
   rescue
@@ -310,7 +366,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def select_by_name(name) when is_binary(name) do
     case State.get_tree() do
-      {tree, _, _, _} ->
+      {tree, _, _, _, _} ->
         name_map = State.get_tree_name_map()
 
         case Map.get(name_map, name) do
@@ -341,7 +397,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def clear_selection do
     case State.get_tree() do
-      {tree, _, _, _} ->
+      {tree, _, _, _, _} ->
         prev_sel = State.get_tree_selected_item()
         if prev_sel != nil do
           set_item_default_style(tree, prev_sel)
@@ -371,7 +427,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def hover_by_name(name) when is_binary(name) do
     case State.get_tree() do
-      {tree, _, _, _} ->
+      {tree, _, _, _, _} ->
         name_map = State.get_tree_name_map()
         prev_hover = State.get_tree_hover_item()
 
@@ -398,7 +454,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   def hover_by_name(nil) do
     case State.get_tree() do
-      {tree, _, _, _} ->
+      {tree, _, _, _, _} ->
         prev_hover = State.get_tree_hover_item()
         if prev_hover, do: reset_item_style(tree, prev_hover)
         State.put_tree_hover_item(nil)
@@ -429,6 +485,10 @@ defmodule Lunity.Editor.HierarchyTree do
             State.put_load_prefab_command(glb_id)
           end
 
+          :ok
+
+        {:game_instance, instance_id, scene_module} ->
+          State.put_watch_command({:watch, instance_id, scene_module})
           :ok
 
         _ ->

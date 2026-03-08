@@ -466,8 +466,8 @@ defmodule Lunity.Editor.State do
   # ---------------------------------------------------------------------------
 
   @doc "Store tree widget references."
-  def put_tree(tree, root, scene_root, project_root) do
-    :ets.insert(@table, {:tree, {tree, root, scene_root, project_root}})
+  def put_tree(tree, root, scene_root, project_root, instances_root) do
+    :ets.insert(@table, {:tree, {tree, root, scene_root, project_root, instances_root}})
     :ok
   end
 
@@ -585,15 +585,113 @@ defmodule Lunity.Editor.State do
 
       frame ->
         suffix =
-          case {get_context_type(), get_scene_path()} do
-            {_, nil} -> nil
-            {:prefab, path} -> "Prefab: #{path}"
-            {:scene, path} -> "Scene: #{path}"
+          case get_watching_instance() do
+            nil ->
+              case {get_context_type(), get_scene_path()} do
+                {_, nil} -> nil
+                {:prefab, path} -> "Prefab: #{path}"
+                {:scene, path} -> "Scene: #{path}"
+              end
+
+            instance_id ->
+              "Instance: #{instance_id}"
           end
 
         title = if suffix, do: "Lunity Editor — #{suffix}", else: "Lunity Editor"
         :wxFrame.setTitle(frame, String.to_charlist(title))
         :ok
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Game instance viewing
+  # ---------------------------------------------------------------------------
+
+  @doc "Set the instance ID currently being watched in the quad view."
+  def put_watching_instance(instance_id) do
+    :ets.insert(@table, {:watching_instance, instance_id})
+    :ok
+  end
+
+  @doc "Get the instance ID being watched, or nil."
+  def get_watching_instance do
+    case :ets.lookup(@table, :watching_instance) do
+      [{:watching_instance, id}] -> id
+      [] -> nil
+    end
+  end
+
+  @doc "Clear the watched instance (e.g. when loading a different scene)."
+  def clear_watching_instance do
+    :ets.delete(@table, :watching_instance)
+    :ets.delete(@table, :instance_entity_map)
+    :ets.delete(@table, :position_component)
+    :ok
+  end
+
+  @doc "Store the node-name → entity-id mapping for the watched instance."
+  def put_instance_entity_map(map) when is_map(map) do
+    :ets.insert(@table, {:instance_entity_map, map})
+    :ok
+  end
+
+  @doc "Get the instance entity map, or nil."
+  def get_instance_entity_map do
+    case :ets.lookup(@table, :instance_entity_map) do
+      [{:instance_entity_map, map}] -> map
+      [] -> nil
+    end
+  end
+
+  @doc "Store the Position component module for ECS sync."
+  def put_position_component(module) when is_atom(module) do
+    :ets.insert(@table, {:position_component, module})
+    :ok
+  end
+
+  @doc "Get the Position component module, or nil."
+  def get_position_component do
+    case :ets.lookup(@table, :position_component) do
+      [{:position_component, mod}] -> mod
+      [] -> nil
+    end
+  end
+
+  @doc "Queue a watch command from tree selection. Consumed by the render loop."
+  def put_watch_command(cmd) do
+    :ets.insert(@table, {:watch_command, cmd})
+    :ok
+  end
+
+  @doc "Take and clear the pending watch command."
+  def take_watch_command do
+    case :ets.lookup(@table, :watch_command) do
+      [{:watch_command, cmd}] ->
+        :ets.delete(@table, :watch_command)
+        cmd
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "Store the last polled instance list for change detection."
+  def put_last_instance_list(list) when is_list(list) do
+    :ets.insert(@table, {:last_instance_list, list})
+    :ok
+  end
+
+  @doc "Get the last polled instance list."
+  def get_last_instance_list do
+    case :ets.lookup(@table, :last_instance_list) do
+      [{:last_instance_list, list}] -> list
+      [] -> []
+    end
+  end
+
+  @doc "Update only the scene struct in ETS (no path/entities change)."
+  def update_scene_in_place(scene) do
+    :ets.insert(@table, {:scene, scene})
+    :ok
   end
 end

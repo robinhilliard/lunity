@@ -287,7 +287,7 @@ defmodule Lunity.SceneLoader do
                 |> maybe_store_glb_id(node_def)
 
               {child, entity_entities} =
-                if node_def.entity do
+                if node_def.entity && not Keyword.get(opts, :skip_entities, false) do
                   merged_config = ConfigLoader.merge_config(prefab_config, overrides)
 
                   case init_entity_from_def(node_def, merged_config) do
@@ -316,7 +316,7 @@ defmodule Lunity.SceneLoader do
             |> maybe_apply_light(node_def)
 
           {child, entity_entities} =
-            if node_def.entity do
+            if node_def.entity && not Keyword.get(opts, :skip_entities, false) do
               config = node_def.properties || %{}
 
               case init_entity_from_def(node_def, config) do

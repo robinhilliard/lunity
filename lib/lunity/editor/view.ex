@@ -92,6 +92,9 @@ defmodule Lunity.Editor.View do
     state = maybe_load_default_scene(state)
     state = process_load_command(state)
     state = maybe_refresh_tree(state)
+    state = maybe_refresh_instances(state)
+    state = process_watch_command(state)
+    sync_ecs_to_scene()
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
     state = process_pick_request(state, w, h)
@@ -344,7 +347,7 @@ defmodule Lunity.Editor.View do
 
   def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _, _}}, state) do
     case State.get_tree() do
-      {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
+      {tree, _, _, _, _} -> HierarchyTree.handle_selection(tree, item)
       _ -> nil
     end
 
@@ -353,7 +356,7 @@ defmodule Lunity.Editor.View do
 
   def handle_event({:wx_event, {:wxTree, :command_tree_item_activated, item, _, _}}, state) do
     case State.get_tree() do
-      {tree, _, _, _} -> HierarchyTree.handle_activation(tree, item)
+      {tree, _, _, _, _} -> HierarchyTree.handle_activation(tree, item)
       _ -> nil
     end
 
@@ -704,6 +707,7 @@ defmodule Lunity.Editor.View do
 
     case SceneLoader.load_scene(path, opts) do
       {:ok, scene, entities} ->
+        State.clear_watching_instance()
         State.set_scene(scene, path, entities, :scene)
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, path, length(entities)})
@@ -875,6 +879,150 @@ defmodule Lunity.Editor.View do
     end
 
     state
+  end
+
+  # --- Game instance viewing ---
+
+  defp maybe_refresh_instances(state) do
+    if rem(state.frame, 60) == 0 do
+      current =
+        try do
+          Lunity.Instance.list() |> Enum.sort()
+        rescue
+          _ -> []
+        end
+
+      if current != State.get_last_instance_list() do
+        State.put_last_instance_list(current)
+        HierarchyTree.update_instances()
+
+        if State.get_watching_instance() not in [nil | current] do
+          State.clear_watching_instance()
+          State.update_window_title()
+        end
+      end
+    end
+
+    state
+  end
+
+  defp process_watch_command(%{program: program} = state) do
+    case State.take_watch_command() do
+      {:watch, instance_id, scene_module} ->
+        activate_instance_view(state, program, instance_id, scene_module)
+
+      nil ->
+        state
+    end
+  end
+
+  defp activate_instance_view(state, program, instance_id, scene_module) do
+    opts = [shader_program: program, skip_entities: true]
+
+    case SceneLoader.load_scene(scene_module, opts) do
+      {:ok, scene, _entities} ->
+        instance = Lunity.Instance.get(instance_id)
+
+        entity_map =
+          if instance do
+            for {^instance_id, name} <- instance.entity_ids, into: %{} do
+              {to_string(name), {instance_id, name}}
+            end
+          else
+            %{}
+          end
+
+        pos_mod = find_position_component()
+
+        State.set_scene(scene, inspect(scene_module), [], :scene)
+        State.put_watching_instance(instance_id)
+        State.put_instance_entity_map(entity_map)
+        if pos_mod, do: State.put_position_component(pos_mod)
+        State.update_window_title()
+
+        orbit = EAGL.OrbitCamera.fit_to_scene(scene)
+
+        %{
+          state
+          | orbit: orbit,
+            cam_top: EAGL.OrthoCamera.fit_to_scene(scene, :top),
+            cam_front: EAGL.OrthoCamera.fit_to_scene(scene, :front),
+            cam_right: EAGL.OrthoCamera.fit_to_scene(scene, :right),
+            tried_default: true,
+            load_retries: 0
+        }
+
+      {:error, reason} ->
+        IO.puts("Failed to load instance scene: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp find_position_component do
+    try do
+      :ets.tab2list(:lunity_component_meta)
+      |> Enum.find_value(fn {module, opts} ->
+        name = Atom.to_string(module)
+
+        if String.ends_with?(name, ".Position") and
+             opts.storage == :tensor and opts.shape == {3} do
+          module
+        end
+      end)
+    rescue
+      _ -> nil
+    end
+  end
+
+  defp sync_ecs_to_scene do
+    with instance_id when not is_nil(instance_id) <- State.get_watching_instance(),
+         %{} = entity_map when map_size(entity_map) > 0 <- State.get_instance_entity_map(),
+         pos_mod when not is_nil(pos_mod) <- State.get_position_component(),
+         %Scene{} = scene <- State.get_scene() do
+      position_map =
+        entity_map
+        |> Enum.reduce(%{}, fn {node_name, entity_id}, acc ->
+          try do
+            case Lunity.ComponentStore.get(pos_mod, entity_id) do
+              {_x, _y, _z} = pos -> Map.put(acc, node_name, pos)
+              _ -> acc
+            end
+          rescue
+            _ -> acc
+          end
+        end)
+
+      if map_size(position_map) > 0 do
+        updated = apply_positions_to_scene(scene, position_map)
+        State.update_scene_in_place(updated)
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp apply_positions_to_scene(scene, position_map) do
+    new_roots =
+      Enum.map(scene.root_nodes, fn node ->
+        apply_positions_recursive(node, position_map)
+      end)
+
+    %{scene | root_nodes: new_roots}
+  end
+
+  defp apply_positions_recursive(node, position_map) do
+    node =
+      case Map.get(position_map, node.name) do
+        nil -> node
+        {x, y, z} -> Node.set_position(node, vec3(x * 1.0, y * 1.0, z * 1.0))
+      end
+
+    updated_children =
+      Enum.map(node.children || [], fn child ->
+        apply_positions_recursive(child, position_map)
+      end)
+
+    %{node | children: updated_children}
   end
 
   @impl true
