@@ -138,7 +138,10 @@ defmodule Mix.Tasks.Lunity.Edit do
       log.("Phoenix endpoint on port #{port}, MCP SSE at http://localhost:#{port}/sse")
 
       Application.put_env(:lunity, Lunity.Web.Endpoint,
-        http: [port: port],
+        http: [
+          port: port,
+          transport_options: [socket_opts: [keepalive: true]]
+        ],
         server: true,
         secret_key_base: :crypto.strong_rand_bytes(64) |> Base.encode64()
       )

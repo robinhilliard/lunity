@@ -11,5 +11,14 @@ defmodule Lunity.Web.Endpoint do
     from: {:lunity, "priv/static"}
   )
 
+  plug(:track_sse)
   plug(Lunity.Web.Router)
+
+  defp track_sse(%{method: "GET", path_info: path} = conn, _opts)
+       when path == ["sse"] or path == ["mcp", "v1", "sse"] do
+    Lunity.Web.ConnectionReaper.track(self())
+    conn
+  end
+
+  defp track_sse(conn, _opts), do: conn
 end

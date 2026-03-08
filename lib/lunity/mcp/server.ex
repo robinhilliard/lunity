@@ -448,6 +448,30 @@ defmodule Lunity.MCP.Server do
     })
   end
 
+  deftool "runtime_info" do
+    meta do
+      name("Runtime Info")
+
+      description(
+        "BEAM runtime diagnostics: process count, memory usage, active SSE connections, scheduler utilization, uptime. Use to monitor long-running instances."
+      )
+    end
+
+    input_schema(%{type: "object", properties: %{}})
+  end
+
+  deftool "gc" do
+    meta do
+      name("Garbage Collect")
+
+      description(
+        "Force garbage collection on all BEAM processes. Returns memory before/after. Safe to call at any time."
+      )
+    end
+
+    input_schema(%{type: "object", properties: %{}})
+  end
+
   # Apply project context from state (set via set_project tool) so Lunity.priv_dir etc. work
   defp apply_project_context(state) do
     if cwd = state[:project_cwd] do
@@ -924,6 +948,58 @@ defmodule Lunity.MCP.Server do
       |> Enum.sort_by(& &1.index)
 
     content = Jason.encode!(%{entity_count: length(entities), entities: entities})
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+  end
+
+  defp do_handle_tool_call("runtime_info", _args, state) do
+    mem = :erlang.memory()
+    {uptime_ms, _} = :erlang.statistics(:wall_clock)
+
+    info = %{
+      process_count: :erlang.system_info(:process_count),
+      process_limit: :erlang.system_info(:process_limit),
+      memory_mb: %{
+        total: Float.round(mem[:total] / 1_048_576, 1),
+        processes: Float.round(mem[:processes] / 1_048_576, 1),
+        ets: Float.round(mem[:ets] / 1_048_576, 1),
+        binary: Float.round(mem[:binary] / 1_048_576, 1),
+        system: Float.round(mem[:system] / 1_048_576, 1)
+      },
+      sse_connections: Lunity.Web.ConnectionReaper.count(),
+      sse_details: Lunity.Web.ConnectionReaper.info(),
+      uptime_hours: Float.round(uptime_ms / 3_600_000, 2),
+      schedulers: :erlang.system_info(:schedulers_online),
+      otp_release: to_string(:erlang.system_info(:otp_release))
+    }
+
+    content = Jason.encode!(info, pretty: true)
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+  end
+
+  defp do_handle_tool_call("gc", _args, state) do
+    mem_before = :erlang.memory(:total)
+
+    pids = Process.list()
+
+    Enum.each(pids, fn pid ->
+      try do
+        :erlang.garbage_collect(pid)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    mem_after = :erlang.memory(:total)
+    freed = mem_before - mem_after
+
+    content =
+      Jason.encode!(%{
+        processes_collected: length(pids),
+        memory_before_mb: Float.round(mem_before / 1_048_576, 1),
+        memory_after_mb: Float.round(mem_after / 1_048_576, 1),
+        freed_mb: Float.round(freed / 1_048_576, 1)
+      })
+
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
