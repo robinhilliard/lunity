@@ -14,6 +14,7 @@ defmodule Lunity.Web.ViewerSocket do
   @behaviour Phoenix.Socket.Transport
 
   alias EAGL.OrbitCamera
+  alias Lunity.Input.{Session, Keymap, Gamepad}
   alias Lunity.Web.SceneSerializer
 
   require Logger
@@ -30,8 +31,10 @@ defmodule Lunity.Web.ViewerSocket do
 
   @impl true
   def init(state) do
+    session_id = make_ref()
+    Session.register(session_id)
     send(self(), :send_initial_state)
-    {:ok, state}
+    {:ok, Map.put(state, :session_id, session_id)}
   end
 
   @impl true
@@ -145,6 +148,40 @@ defmodule Lunity.Web.ViewerSocket do
     end
   end
 
+  # --- Input events (keyboard, mouse, gamepad) ---
+
+  defp handle_event(%{"type" => "key_down", "code" => code}, state) do
+    Session.key_down(state.session_id, Keymap.from_js(code))
+    {:ok, state}
+  end
+
+  defp handle_event(%{"type" => "key_up", "code" => code}, state) do
+    Session.key_up(state.session_id, Keymap.from_js(code))
+    {:ok, state}
+  end
+
+  defp handle_event(%{"type" => "mouse_move", "x" => x, "y" => y}, state) do
+    Session.mouse_move(state.session_id, x * 1.0, y * 1.0)
+    {:ok, state}
+  end
+
+  defp handle_event(%{"type" => "mouse_button", "button" => btn, "pressed" => pressed}, state) do
+    button = String.to_existing_atom(btn)
+    Session.mouse_button(state.session_id, button, pressed)
+    {:ok, state}
+  end
+
+  defp handle_event(%{"type" => "mouse_wheel", "delta" => delta}, state) do
+    Session.mouse_wheel(state.session_id, delta * 1.0)
+    {:ok, state}
+  end
+
+  defp handle_event(%{"type" => "gamepad"} = data, state) do
+    gamepad = Gamepad.from_json(data)
+    Session.update_gamepad(state.session_id, gamepad.index, gamepad)
+    {:ok, state}
+  end
+
   defp handle_event(_event, state) do
     {:ok, state}
   end
@@ -222,7 +259,13 @@ defmodule Lunity.Web.ViewerSocket do
   def handle_info(_msg, state), do: {:ok, state}
 
   @impl true
-  def terminate(_reason, _state), do: :ok
+  def terminate(_reason, state) do
+    if session_id = state[:session_id] do
+      Session.unregister(session_id)
+    end
+
+    :ok
+  end
 
   # --- Private helpers ---
 

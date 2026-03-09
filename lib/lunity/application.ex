@@ -38,6 +38,7 @@ defmodule Lunity.Application do
 
   defp base_children do
     [
+      Lunity.Input.SessionManager,
       {Registry, keys: :unique, name: Lunity.Instance.Registry},
       {DynamicSupervisor, name: Lunity.Instance.Supervisor, strategy: :one_for_one},
       Lunity.Web.ConnectionReaper
