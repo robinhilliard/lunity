@@ -1,0 +1,13 @@
+[package]
+name = "lunity_gamepad"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lunity_gamepad"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.37"
+gilrs = "0.11"
