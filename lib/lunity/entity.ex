@@ -71,9 +71,19 @@ defmodule Lunity.Entity do
 
     struct_fields = Lunity.Properties.build_struct_fields(properties)
     property_spec = Lunity.Properties.build_property_spec(properties)
+    type_fields = Lunity.Properties.build_type_fields(properties)
+
+    struct_type =
+      {:%, [],
+       [
+         {:__MODULE__, [], Elixir},
+         {:%{}, [], Enum.map(type_fields, fn {k, v} -> {k, v} end)}
+       ]}
 
     quote do
       defstruct unquote(struct_fields)
+
+      @type t :: unquote(struct_type)
 
       @doc false
       def __property_spec__, do: unquote(Macro.escape(property_spec))

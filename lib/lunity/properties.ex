@@ -61,6 +61,24 @@ defmodule Lunity.Properties do
     |> Map.new()
   end
 
+  @doc false
+  def build_type_fields(properties) do
+    Enum.map(properties, fn {name, type, _opts} ->
+      {name, property_type_to_typespec(type)}
+    end)
+  end
+
+  defp property_type_to_typespec(:float), do: quote(do: number())
+  defp property_type_to_typespec(:integer), do: quote(do: integer())
+  defp property_type_to_typespec(:string), do: quote(do: String.t())
+  defp property_type_to_typespec(:atom), do: quote(do: atom())
+  defp property_type_to_typespec(:boolean), do: quote(do: boolean())
+  defp property_type_to_typespec(:module), do: quote(do: module())
+  defp property_type_to_typespec(:float_array), do: quote(do: [number()])
+  defp property_type_to_typespec(:integer_array), do: quote(do: [integer()])
+  defp property_type_to_typespec(:boolean_array), do: quote(do: [boolean()])
+  defp property_type_to_typespec(_), do: quote(do: term())
+
   # ---------------------------------------------------------------------------
   # Runtime introspection
   # ---------------------------------------------------------------------------

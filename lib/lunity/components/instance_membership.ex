@@ -5,6 +5,7 @@ defmodule Lunity.Components.InstanceMembership do
   Stored as a structured component with an index for fast lookup:
   `search(instance_id)` returns all entity IDs in that instance.
   """
+  @type t :: String.t()
   use Lunity.Component,
     storage: :structured,
     index: true
