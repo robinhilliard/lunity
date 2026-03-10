@@ -531,14 +531,14 @@ Lunity depends on [EAGL](https://github.com/robinhilliard/eagl) for rendering, [
 
 ### Requirements
 
-Erlang/OTP 25+ with wx support, Elixir 1.17+, and OpenGL 3.3+. The `.tool-versions` is set to `system` — each platform uses its package manager.
+Erlang/OTP 25+ with wx support, Elixir 1.17+, OpenGL 3.3+, and Rust (for the gilrs gamepad NIF). The `.tool-versions` is set to `system` on macOS (Homebrew) and overridden to asdf versions on Linux/WSL2.
 
 #### macOS
 
 Use Homebrew for Erlang and Elixir. Do **not** use asdf-installed Erlang — it links against wxWidgets at build time and breaks when Homebrew upgrades wxWidgets.
 
 ```bash
-brew install erlang elixir
+brew install erlang elixir rust
 ```
 
 Verify: `elixir --version` should show matching OTP versions (e.g. "compiled with Erlang/OTP 26" when running OTP 26). Mismatched versions cause `nif_not_loaded` errors on `:gl.*` calls. See [EAGL README — Installing Erlang and Elixir on macOS](https://github.com/robinhilliard/eagl#installing-erlang-and-elixir-on-macos) for details and alternatives.
@@ -547,11 +547,35 @@ Verify: `elixir --version` should show matching OTP versions (e.g. "compiled wit
 
 #### Linux / WSL2
 
+The apt Erlang/Elixir packages on Debian/Ubuntu are typically too old (e.g. Elixir 1.14 vs the required 1.17). Use [asdf](https://asdf-vm.com/) instead and update `.tool-versions` to point at the installed versions:
+
 ```bash
-sudo apt install erlang elixir libgl1-mesa-dev libglu1-mesa-dev inotify-tools
+# Erlang and Elixir via asdf
+asdf plugin add erlang
+asdf plugin add elixir
+asdf install erlang 27.1
+asdf install elixir 1.17.3-otp-27
 ```
 
-`inotify-tools` is needed for file watching (auto-reload on changes). WSL2 works for development but OpenGL runs through a software layer — expect lower frame rates and input lag.
+Then set `.tool-versions` in the lunity workspace:
+
+```
+erlang 27.1
+elixir 1.17.3-otp-27
+```
+
+Install system libraries and Rust (needed for the gilrs gamepad NIF):
+
+```bash
+# OpenGL, wx, file watching, and gilrs NIF dependencies
+sudo apt install libgl1-mesa-dev libglu1-mesa-dev inotify-tools libudev-dev pkg-config
+
+# Rust (for gilrs gamepad NIF)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+`inotify-tools` is needed for file watching (auto-reload on changes). `libudev-dev` and `pkg-config` are required by the gilrs crate (native gamepad input). WSL2 works for development but OpenGL runs through a software layer — expect lower frame rates and input lag.
 
 ## Coordinate system
 
