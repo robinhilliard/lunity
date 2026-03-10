@@ -11,10 +11,11 @@ defmodule Lunity.Input.Session do
       {session_id, :keyboard}        => Keyboard.t()
       {session_id, :mouse}           => Mouse.t()
       {session_id, :gamepad, index}  => Gamepad.t()
+      {session_id, :head_pose}       => HeadPose.t()
       {session_id, :meta}            => SessionMeta.t()
   """
 
-  alias Lunity.Input.{Keyboard, Mouse, Gamepad, SessionMeta}
+  alias Lunity.Input.{Keyboard, Mouse, Gamepad, HeadPose, SessionMeta}
 
   @table :lunity_input
 
@@ -28,6 +29,7 @@ defmodule Lunity.Input.Session do
   def register(session_id, meta \\ %SessionMeta{}) do
     :ets.insert(@table, {{session_id, :keyboard}, %Keyboard{}})
     :ets.insert(@table, {{session_id, :mouse}, %Mouse{}})
+    :ets.insert(@table, {{session_id, :head_pose}, %HeadPose{}})
     :ets.insert(@table, {{session_id, :meta}, meta})
     :ok
   end
@@ -72,6 +74,14 @@ defmodule Lunity.Input.Session do
     @table
     |> :ets.match_object({{session_id, :gamepad, :_}, :_})
     |> Map.new(fn {{_, :gamepad, idx}, gp} -> {idx, gp} end)
+  end
+
+  @spec get_head_pose(session_id()) :: HeadPose.t() | nil
+  def get_head_pose(session_id) do
+    case :ets.lookup(@table, {session_id, :head_pose}) do
+      [{_, hp}] -> hp
+      [] -> nil
+    end
   end
 
   @spec get_meta(session_id()) :: SessionMeta.t() | nil
@@ -143,6 +153,11 @@ defmodule Lunity.Input.Session do
   @spec remove_gamepad(session_id(), non_neg_integer()) :: true
   def remove_gamepad(session_id, index) do
     :ets.delete(@table, {session_id, :gamepad, index})
+  end
+
+  @spec update_head_pose(session_id(), HeadPose.t()) :: true
+  def update_head_pose(session_id, %HeadPose{} = hp) do
+    :ets.insert(@table, {{session_id, :head_pose}, hp})
   end
 
   @spec update_meta(session_id(), SessionMeta.t()) :: true

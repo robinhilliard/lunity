@@ -2,7 +2,8 @@ defmodule Mix.Tasks.Lunity.InputTest do
   @shortdoc "Open a window and dump changed input state at 10 fps"
   @moduledoc """
   Starts a minimal EAGL window to capture keyboard and mouse events, polls
-  gamepads via gilrs, and prints input state changes at 10 fps.
+  gamepads via gilrs, TrackIR via NPClient SDK (Windows), and prints input
+  state changes at 10 fps.
 
   Run from your game project (or the lunity project itself):
 
@@ -29,9 +30,16 @@ defmodule Mix.Tasks.Lunity.InputTest do
         {:error, reason} -> "gilrs unavailable (#{inspect(reason)})"
       end
 
+    trackir_label =
+      case :os.type() do
+        {:win32, :nt} -> "will start after window opens"
+        _ -> "Windows only"
+      end
+
     IO.puts("--- Lunity Input Test (10 fps, changes only) ---")
     IO.puts("Session: #{@session_id}")
     IO.puts("Gamepads: #{gamepad_status}")
+    IO.puts("TrackIR: #{trackir_label}")
     IO.puts("Focus the window and press keys / move mouse / use controllers.")
     IO.puts("Press ESC or close the window to quit.\n")
 
@@ -57,8 +65,9 @@ defmodule Mix.Tasks.Lunity.InputTest do
     kb = Session.get_keyboard(@session_id)
     mouse = Session.get_mouse(@session_id)
     gamepads = Session.get_gamepads(@session_id)
+    head_pose = Session.get_head_pose(@session_id)
 
-    cur = snapshot(kb, mouse, gamepads)
+    cur = snapshot(kb, mouse, gamepads, head_pose)
     lines = diff(prev, cur)
 
     if lines != [] do
@@ -75,13 +84,28 @@ defmodule Mix.Tasks.Lunity.InputTest do
   # Snapshot: reduce live state to comparable terms
   # --------------------------------------------------------------------------
 
-  defp snapshot(kb, mouse, gamepads) do
+  defp snapshot(kb, mouse, gamepads, head_pose) do
     %{
       keys: if(kb, do: kb.keys_down |> MapSet.to_list() |> Enum.sort(), else: []),
       mouse_pos: if(mouse, do: round_pos(mouse.position), else: {0, 0}),
       mouse_btns: if(mouse, do: pressed_buttons(mouse.buttons), else: []),
       mouse_wheel: if(mouse, do: round3(mouse.wheel_delta), else: 0.0),
-      gamepads: gamepads |> Enum.sort_by(fn {i, _} -> i end) |> Enum.map(&snap_gamepad/1)
+      gamepads: gamepads |> Enum.sort_by(fn {i, _} -> i end) |> Enum.map(&snap_gamepad/1),
+      head_pose: snap_head_pose(head_pose)
+    }
+  end
+
+  defp snap_head_pose(nil), do: nil
+
+  defp snap_head_pose(hp) do
+    %{
+      yaw: deaden(hp.yaw),
+      pitch: deaden(hp.pitch),
+      roll: deaden(hp.roll),
+      x: deaden(hp.x),
+      y: deaden(hp.y),
+      z: deaden(hp.z),
+      frame: hp.frame
     }
   end
 
@@ -148,6 +172,13 @@ defmodule Mix.Tasks.Lunity.InputTest do
       lines
     end
 
+    lines = if prev.head_pose != cur.head_pose and cur.head_pose != nil do
+      hp = cur.head_pose
+      lines ++ ["  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"]
+    else
+      lines
+    end
+
     prev_gp = Map.new(prev.gamepads)
     cur_gp = Map.new(cur.gamepads)
 
@@ -181,6 +212,13 @@ defmodule Mix.Tasks.Lunity.InputTest do
     {x, y} = cur.mouse_pos
     btn_label = if cur.mouse_btns == [], do: "(none)", else: Enum.join(cur.mouse_btns, ", ")
     lines = lines ++ ["  MOUSE: pos=(#{fmt(x)}, #{fmt(y)})  buttons=[#{btn_label}]  wheel=#{fmt(cur.mouse_wheel)}"]
+
+    lines = if cur.head_pose != nil and cur.head_pose.frame > 0 do
+      hp = cur.head_pose
+      lines ++ ["  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"]
+    else
+      lines ++ ["  TRACKIR: (not active)"]
+    end
 
     if cur.gamepads == [] do
       lines ++ ["  GAMEPADS: (none connected)"]
@@ -256,7 +294,7 @@ defmodule InputTestWindow do
 
   @impl true
   def setup do
-    {:ok, %{session_id: "input_test"}}
+    {:ok, %{session_id: "input_test", trackir_started: false}}
   end
 
   @impl true
@@ -272,9 +310,46 @@ defmodule InputTestWindow do
     {:ok, state}
   end
 
+  def handle_event({:tick, _dt}, %{trackir_started: false} = state) do
+    state = try_start_trackir(state)
+    {:ok, state}
+  end
+
   def handle_event(event, state) do
     Lunity.Input.Capture.forward(event, state.session_id)
     {:ok, state}
+  end
+
+  defp try_start_trackir(state) do
+    case :os.type() do
+      {:win32, :nt} ->
+        hwnd =
+          try do
+            frame = :wxWindow.findWindowByLabel(~c"Lunity Input Test")
+
+            if frame != :wx.null() do
+              :wxWindow.getHandle(frame)
+            end
+          rescue
+            _ -> nil
+          end
+
+        if hwnd do
+          status =
+            case Lunity.Input.NativeTrackIR.start_link(session_id: state.session_id, hwnd: hwnd) do
+              {:ok, _} -> "started"
+              {:error, reason} -> "failed (#{inspect(reason)})"
+            end
+
+          IO.puts("TrackIR: #{status}")
+          %{state | trackir_started: true}
+        else
+          state
+        end
+
+      _ ->
+        %{state | trackir_started: true}
+    end
   end
 
   @impl true
