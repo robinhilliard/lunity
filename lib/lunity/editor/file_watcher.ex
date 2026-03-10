@@ -7,13 +7,14 @@ defmodule Lunity.Editor.FileWatcher do
   - **priv/** assets: `priv/config/`, `priv/scenes/`, `priv/prefabs/` for `.exs`
     config scripts and `.glb` assets. Changes trigger an immediate scene reload.
 
-  - **lib/** modules: Scene, Entity, and Prefab `.ex` files. Changes trigger
-    recompilation via `Code.compile_file/1` to hot-load the new module, then
-    a scene reload so the editor reflects the updated definition.
+  - **lib/** modules: `.ex` files. Changes trigger a full `mix compile` so that
+    cross-file dependencies are resolved correctly, then a scene reload.
 
   Debounces rapid changes (editors often write multiple times in quick succession)
-  with a 300ms window. Tracks the last known scene path independently so that
-  recovery works after load errors (e.g. syntax errors that clear the scene).
+  with a 300ms window. If compilation fails, the scene reload is skipped --
+  the old working code stays loaded (BEAM semantics) and game state is preserved.
+  Tracks the last known scene path independently so that recovery works after
+  the error is fixed and the next successful compile triggers a reload.
   """
   use GenServer
   require Logger
@@ -61,10 +62,12 @@ defmodule Lunity.Editor.FileWatcher do
   @impl true
   def handle_info({:file_event, _watcher, {path, _events}}, state) do
     state =
-      if String.ends_with?(path, ".ex") do
-        %{state | pending_recompiles: MapSet.put(state.pending_recompiles, path)}
-      else
-        state
+      cond do
+        String.ends_with?(path, ".ex") ->
+          %{state | pending_recompiles: MapSet.put(state.pending_recompiles, path)}
+
+        true ->
+          %{state | asset_changed: true}
       end
 
     state = schedule_reload(state)
@@ -76,9 +79,20 @@ defmodule Lunity.Editor.FileWatcher do
   end
 
   def handle_info(:do_reload, state) do
-    recompile_pending(state.pending_recompiles)
-    state = reload_current_scene(state)
-    {:noreply, %{state | debounce_ref: nil, pending_recompiles: MapSet.new()}}
+    has_code_changes = MapSet.size(state.pending_recompiles) > 0
+    compile_ok = if has_code_changes, do: recompile_project(), else: true
+
+    # Only reload the scene when assets changed (.exs configs, .glb models).
+    # Code-only changes are already hot-loaded by the compiler -- systems pick
+    # up new module code on the next tick without needing a scene rebuild.
+    state =
+      if compile_ok and state.asset_changed do
+        reload_current_scene(state)
+      else
+        state
+      end
+
+    {:noreply, %{state | debounce_ref: nil, pending_recompiles: MapSet.new(), asset_changed: false}}
   end
 
   # ---------------------------------------------------------------------------
@@ -86,7 +100,13 @@ defmodule Lunity.Editor.FileWatcher do
   # ---------------------------------------------------------------------------
 
   defp initial_state do
-    %{watcher: nil, debounce_ref: nil, last_scene_path: nil, pending_recompiles: MapSet.new()}
+    %{
+      watcher: nil,
+      debounce_ref: nil,
+      last_scene_path: nil,
+      pending_recompiles: MapSet.new(),
+      asset_changed: false
+    }
   end
 
   defp schedule_reload(%{debounce_ref: ref} = state) do
@@ -95,25 +115,36 @@ defmodule Lunity.Editor.FileWatcher do
     %{state | debounce_ref: new_ref}
   end
 
-  defp recompile_pending(files) do
-    if MapSet.size(files) > 0 do
-      prev = Code.compiler_options(ignore_module_conflict: true)
+  defp recompile_project do
+    case Mix.Task.rerun("compile", ["--no-protocol-consolidation"]) do
+      {:ok, _diagnostics} ->
+        Logger.info("FileWatcher: recompiled successfully")
+        true
 
-      Enum.each(files, fn path ->
-        try do
-          Code.compile_file(path)
-          Logger.info("FileWatcher: recompiled #{Path.relative_to_cwd(path)}")
-        rescue
-          e ->
-            Logger.warning(
-              "FileWatcher: compile error in #{Path.relative_to_cwd(path)}: #{Exception.message(e)}"
-            )
-        end
-      end)
+      {:error, diagnostics} ->
+        errors =
+          diagnostics
+          |> Enum.filter(&(&1.severity == :error))
+          |> Enum.map_join("\n  ", &format_diagnostic/1)
 
-      Code.compiler_options(ignore_module_conflict: prev[:ignore_module_conflict] || false)
+        Logger.warning("FileWatcher: compile failed, scene reload skipped\n  #{errors}")
+        false
+
+      {:noop, _diagnostics} ->
+        true
     end
   end
+
+  defp format_diagnostic(%{file: file, position: pos, message: msg}) do
+    loc = if pos, do: ":#{format_position(pos)}", else: ""
+    "#{Path.relative_to_cwd(file || "unknown")}#{loc} #{msg}"
+  end
+
+  defp format_diagnostic(%{message: msg}), do: msg
+
+  defp format_position({line, col}), do: "#{line}:#{col}"
+  defp format_position(line) when is_integer(line), do: "#{line}"
+  defp format_position(other), do: "#{inspect(other)}"
 
   defp reload_current_scene(state) do
     path = State.get_scene_path() || state.last_scene_path

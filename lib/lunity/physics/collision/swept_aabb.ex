@@ -132,7 +132,7 @@ defmodule Lunity.Physics.Collision.SweptAABB do
     t_enter_masked = Nx.select(valid, t_enter, no_hit)
 
     earliest_t = Nx.reduce_min(t_enter_masked, axes: [1])
-    earliest_j = Nx.argmin(t_enter_masked, axes: [1])
+    earliest_j = Nx.argmin(t_enter_masked, axis: 1)
     has_collision = Nx.less(earliest_t, no_hit)
 
     # Gather collision axis for the earliest partner
