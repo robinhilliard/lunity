@@ -85,9 +85,18 @@ defmodule Mix.Tasks.Lunity.InputTest do
     }
   end
 
+  @axis_deadzone 0.03
+
   defp round_pos({x, y}), do: {round3(x), round3(y)}
   defp round3(v) when is_float(v), do: Float.round(v, 3)
   defp round3(v), do: v
+
+  defp deaden(v) when is_float(v) do
+    r = Float.round(v, 1)
+    if abs(r) < @axis_deadzone, do: 0.0, else: r
+  end
+
+  defp deaden(v), do: v
 
   defp pressed_buttons(btns) do
     btns |> Enum.filter(fn {_, v} -> v end) |> Enum.map(fn {b, _} -> b end) |> Enum.sort()
@@ -97,7 +106,7 @@ defmodule Mix.Tasks.Lunity.InputTest do
     {idx, %{
       id: gp.id,
       connected: gp.connected,
-      axes: Enum.map(gp.axes, &round3/1),
+      axes: Enum.map(gp.axes, &deaden/1),
       pressed: gp.buttons |> Enum.with_index() |> Enum.filter(fn {b, _} -> b.pressed end) |> Enum.map(fn {_, i} -> i end),
       analog: gp.buttons |> Enum.with_index() |> Enum.reject(fn {b, _} -> b.value == 0.0 end) |> Enum.map(fn {b, i} -> {i, round3(b.value)} end)
     }}
