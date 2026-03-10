@@ -575,7 +575,32 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
-`inotify-tools` is needed for file watching (auto-reload on changes). `libudev-dev` and `pkg-config` are required by the gilrs crate (native gamepad input). WSL2 works for development but OpenGL runs through a software layer — expect lower frame rates and input lag.
+`inotify-tools` is needed for file watching (auto-reload on changes). `libudev-dev` and `pkg-config` are required by the gilrs crate (native gamepad input). WSL2 works for development but OpenGL runs through a software layer — expect lower frame rates and input lag. Game controllers attached to the Windows host are not visible in WSL2 without a custom kernel rebuild; use native Windows instead for gamepad testing.
+
+#### Windows
+
+Install Erlang/OTP and Elixir using the official install script. From PowerShell:
+
+```powershell
+curl.exe -fsSO https://elixir-lang.org/install.bat
+.\install.bat elixir@1.18.4 otp@27.3.4.7
+```
+
+Then add the paths it prints to your `$env:PATH` (or `$PROFILE`):
+
+```powershell
+$env:PATH = "$env:USERPROFILE\.elixir-install\installs\otp\27.3.4.7\bin;$env:PATH"
+$env:PATH = "$env:USERPROFILE\.elixir-install\installs\elixir\1.18.4-otp-27\bin;$env:PATH"
+```
+
+Install Rust and Visual Studio Build Tools (needed for the gilrs gamepad NIF):
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override '--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+winget install Rustlang.Rustup
+```
+
+The `.tool-versions` `system` setting works correctly on Windows since Erlang/Elixir are installed system-wide. Game controllers are detected natively via Windows Gaming Input (WGI) — no USB passthrough needed.
 
 ## Coordinate system
 
