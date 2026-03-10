@@ -48,8 +48,9 @@ defmodule Lunity.Entity do
     quote do
       @behaviour Lunity.Entity
       import Lunity.Properties, only: [property: 2, property: 3]
-      import Lunity.Entity, only: [entity: 1]
+      import Lunity.Entity, only: [entity: 1, component: 1]
       Module.register_attribute(__MODULE__, :lunity_properties, accumulate: true)
+      Module.register_attribute(__MODULE__, :lunity_components, accumulate: true)
       @lunity_config_path unquote(Keyword.get(opts, :config))
       @before_compile Lunity.Entity
     end
@@ -65,8 +66,18 @@ defmodule Lunity.Entity do
     end
   end
 
+  @doc """
+  Declares a component type attached to this entity.
+  """
+  defmacro component(module) do
+    quote do
+      @lunity_components unquote(module)
+    end
+  end
+
   defmacro __before_compile__(env) do
     properties = Module.get_attribute(env.module, :lunity_properties) |> Enum.reverse()
+    components = Module.get_attribute(env.module, :lunity_components) |> Enum.reverse()
     config_path = Module.get_attribute(env.module, :lunity_config_path)
 
     struct_fields = Lunity.Properties.build_struct_fields(properties)
@@ -90,6 +101,9 @@ defmodule Lunity.Entity do
 
       @doc false
       def __config_path__, do: unquote(config_path)
+
+      @doc false
+      def __components__, do: unquote(components)
     end
   end
 
@@ -97,6 +111,17 @@ defmodule Lunity.Entity do
   defdelegate validate_properties(module, properties), to: Lunity.Properties
   defdelegate from_config(module, merged_config), to: Lunity.Properties
   defdelegate resolve_module(name), to: Lunity.Properties
+
+  @doc """
+  Returns the list of component modules declared for an entity module.
+  """
+  def components(module) do
+    if function_exported?(module, :__components__, 0) do
+      module.__components__()
+    else
+      []
+    end
+  end
 
   @doc """
   Returns the default config path for an entity module, or nil.
