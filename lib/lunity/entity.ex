@@ -67,11 +67,12 @@ defmodule Lunity.Entity do
   end
 
   @doc """
-  Declares a component type attached to this entity.
+  Declares a component type attached to this entity and aliases the module.
   """
   defmacro component(module) do
     quote do
       @lunity_components unquote(module)
+      alias unquote(module)
     end
   end
 
