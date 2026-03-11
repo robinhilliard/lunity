@@ -12,7 +12,7 @@ defmodule Lunity.Physics.Systems.SweptAABBCollision do
   """
   use Lunity.System, type: :tensor
 
-  alias Lunity.Components.Position
+  alias Lunity.Components.{Position, DeltaTime}
 
   alias Lunity.Physics.Components.{
     Velocity,
@@ -30,13 +30,23 @@ defmodule Lunity.Physics.Systems.SweptAABBCollision do
           collision_layer: CollisionLayer.t(),
           collision_mask: CollisionMask.t(),
           restitution: Restitution.t(),
-          static: Static.t()
+          static: Static.t(),
+          delta_time: DeltaTime.t()
         }) :: %{position: Position.t(), velocity: Velocity.t()}
   def run(inputs) do
+    dt = Nx.reshape(inputs.delta_time, {:auto, 1})
+    scaled_vel = Nx.multiply(inputs.velocity, dt)
+    scaled_inputs = %{inputs | velocity: scaled_vel}
+
     presence = Lunity.ComponentStore.get_presence_mask(Lunity.Physics.Components.BoxCollider)
-    all_inputs = Map.put(inputs, :presence, presence)
+    all_inputs = Map.put(scaled_inputs, :presence, presence)
 
     contacts = Lunity.Physics.Collision.SweptAABB.detect(all_inputs)
-    Lunity.Physics.Collision.SweptAABB.resolve_reflect(all_inputs, contacts)
+    result = Lunity.Physics.Collision.SweptAABB.resolve_reflect(all_inputs, contacts)
+
+    safe_dt = Nx.max(dt, Nx.tensor(1.0e-6, type: :f32))
+    velocity_per_s = Nx.divide(result.velocity, safe_dt)
+
+    %{position: result.position, velocity: velocity_per_s}
   end
 end

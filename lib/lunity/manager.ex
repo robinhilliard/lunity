@@ -57,7 +57,8 @@ defmodule Lunity.Manager do
       def init(opts) do
         {:ok, _} = Lunity.ComponentStore.start_link(opts)
 
-        Enum.each(components(), &Lunity.ComponentStore.register/1)
+        all_components = [Lunity.Components.DeltaTime | components()]
+        Enum.each(all_components, &Lunity.ComponentStore.register/1)
 
         if function_exported?(__MODULE__, :setup, 0) do
           apply(__MODULE__, :setup, [])
@@ -71,11 +72,21 @@ defmodule Lunity.Manager do
         interval = div(1000, rate)
         :timer.send_interval(interval, :tick)
 
-        {:ok, %{systems: systems(), interval: interval}}
+        {:ok, %{systems: systems(), interval: interval, last_tick: System.monotonic_time(:millisecond)}}
       end
 
       @impl true
       def handle_info(:tick, state) do
+        now = System.monotonic_time(:millisecond)
+        dt_ms = now - state.last_tick
+        dt_s = dt_ms / 1000.0
+
+        dt_tensor = Lunity.ComponentStore.get_tensor(Lunity.Components.DeltaTime)
+        Lunity.ComponentStore.put_tensor(
+          Lunity.Components.DeltaTime,
+          Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
+        )
+
         cond do
           not Lunity.Editor.State.get_game_paused() ->
             Lunity.TickRunner.tick(state.systems)
@@ -87,7 +98,7 @@ defmodule Lunity.Manager do
             :ok
         end
 
-        {:noreply, state}
+        {:noreply, %{state | last_tick: now}}
       end
     end
   end

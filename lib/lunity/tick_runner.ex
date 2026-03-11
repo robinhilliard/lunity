@@ -23,6 +23,9 @@ defmodule Lunity.TickRunner do
       :tensor -> run_tensor_system(system_module, opts)
       :structured -> run_structured_system(system_module, opts)
     end
+  rescue
+    UndefinedFunctionError ->
+      :ok
   end
 
   defp run_tensor_system(system_module, opts) do
@@ -49,29 +52,45 @@ defmodule Lunity.TickRunner do
   defp run_structured_system(system_module, opts) do
     [primary | _rest] = opts.reads
 
-    for {entity_id, _val} <- ComponentStore.all(primary) do
+    entity_ids = entity_ids_for(primary)
+
+    for entity_id <- entity_ids do
       inputs =
         Map.new(opts.reads, fn component ->
           key = System.component_key(component)
           {key, ComponentStore.get(component, entity_id)}
         end)
 
-      case system_module.run(entity_id, inputs) do
-        updates when is_map(updates) ->
-          for component <- opts.writes do
-            key = System.component_key(component)
+      if Enum.all?(Map.values(inputs), &(&1 != nil)) do
+        case system_module.run(entity_id, inputs) do
+          updates when is_map(updates) ->
+            for component <- opts.writes do
+              key = System.component_key(component)
 
-            case Map.get(updates, key) do
-              nil -> :ok
-              value -> ComponentStore.put(component, entity_id, value)
+              case Map.get(updates, key) do
+                nil -> :ok
+                value -> ComponentStore.put(component, entity_id, value)
+              end
             end
-          end
 
-        _ ->
-          :ok
+          _ ->
+            :ok
+        end
       end
     end
 
     :ok
+  end
+
+  defp entity_ids_for(component) do
+    opts = component.__component_opts__()
+
+    case opts.storage do
+      :structured ->
+        ComponentStore.all(component) |> Enum.map(fn {id, _} -> id end)
+
+      :tensor ->
+        ComponentStore.entity_ids_with(component)
+    end
   end
 end

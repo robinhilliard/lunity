@@ -716,7 +716,7 @@ defmodule Lunity.Editor.View do
       end
     end
 
-    opts = [shader_program: program]
+    opts = [shader_program: program, skip_entities: true]
 
     opts =
       if cwd,

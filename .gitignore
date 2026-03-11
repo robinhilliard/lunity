@@ -24,3 +24,6 @@ lunity-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Compiled NIF binaries (platform-specific, rebuilt by Rustler on compile).
+/priv/native/

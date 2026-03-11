@@ -145,6 +145,22 @@ defmodule Lunity.ComponentStore do
     |> Enum.map(fn {_value, entity_id} -> entity_id end)
   end
 
+  @doc "Returns entity IDs that have presence for a tensor component."
+  def entity_ids_with(component_module) do
+    case get_presence_mask(component_module) do
+      nil ->
+        []
+
+      mask ->
+        mask
+        |> Nx.to_flat_list()
+        |> Enum.with_index()
+        |> Enum.filter(fn {val, _idx} -> val == 1 end)
+        |> Enum.map(fn {_, idx} -> entity_at(idx) end)
+        |> Enum.reject(&is_nil/1)
+    end
+  end
+
   @doc "Returns the presence mask tensor for a tensor component."
   def get_presence_mask(component_module) do
     case :ets.lookup(@tensor_table, {component_module, :presence}) do

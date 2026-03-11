@@ -171,6 +171,15 @@ defmodule Lunity.System do
     end)
   end
 
+  defp extract_map_components({:|, _, types}, env) do
+    Enum.find_value(types, [], fn type ->
+      case extract_map_components(type, env) do
+        [] -> nil
+        components -> components
+      end
+    end)
+  end
+
   defp extract_map_components(_other, _env), do: []
 
   # Extract the module from a remote type call like Position.t()
