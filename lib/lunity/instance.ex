@@ -91,6 +91,71 @@ defmodule Lunity.Instance do
     end
   end
 
+  @doc """
+  Captures a snapshot of the instance's full ECS state.
+
+  Returns a map that can be passed to `clone/2` or `Instance.start/2`
+  with the `:snapshot` option to reproduce this exact state.
+  """
+  def snapshot(instance_id) do
+    case Registry.lookup(Lunity.Instance.Registry, instance_id) do
+      [{pid, _}] -> GenServer.call(pid, :snapshot, 30_000)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Creates a new instance from a snapshot.
+
+  Options:
+  - `:id` - new instance ID (default: auto-generated)
+  - `:manager` - manager module (inherited from snapshot if not given)
+  - `:mutations` - `fn store_id -> ... end` called after restore, inside `with_store`,
+    to tweak component values (e.g. re-seed RandomKey)
+
+  Returns `{:ok, pid}` on success.
+  """
+  def clone(snap, opts \\ []) do
+    id = Keyword.get(opts, :id, generate_id())
+    scene_module = snap.scene_module
+
+    merged_opts =
+      Keyword.merge(opts,
+        id: id,
+        scene_module: scene_module,
+        snapshot: snap,
+        manager: Keyword.get(opts, :manager, snap[:manager])
+      )
+
+    DynamicSupervisor.start_child(
+      Lunity.Instance.Supervisor,
+      {__MODULE__, merged_opts}
+    )
+  end
+
+  @doc """
+  Runs ticks synchronously until `predicate` returns truthy or `max_ticks` is
+  reached. The predicate is a zero-arity function executed inside `with_store`
+  after each tick.
+
+  Returns `{:halted, result, tick_count}` or `{:max_ticks, tick_count}`.
+  """
+  def run_until(instance_id, predicate, opts \\ []) do
+    case Registry.lookup(Lunity.Instance.Registry, instance_id) do
+      [{pid, _}] ->
+        max = Keyword.get(opts, :max_ticks, 10_000)
+        GenServer.call(pid, {:run_until, predicate, max}, :infinity)
+
+      [] ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc "Runs exactly `n` ticks synchronously. Sugar for `run_until` with no predicate."
+  def run_ticks(instance_id, n) do
+    run_until(instance_id, fn -> false end, max_ticks: n)
+  end
+
   # -- GenServer callbacks -------------------------------------------------------
 
   def start_link(opts) do
@@ -103,6 +168,7 @@ defmodule Lunity.Instance do
     id = Keyword.fetch!(opts, :id)
     scene_module = Keyword.fetch!(opts, :scene_module)
     manager = Keyword.get(opts, :manager)
+    snap = Keyword.get(opts, :snapshot)
 
     store_id = id
     {:ok, _pid} = ComponentStore.start_link(store_id, opts)
@@ -112,12 +178,30 @@ defmodule Lunity.Instance do
       Enum.each(components, &ComponentStore.register/1)
     end)
 
-    entity_ids =
-      ComponentStore.with_store(store_id, fn ->
-        init_scene_entities(scene_module)
-      end)
+    {entity_ids, systems, interval} =
+      if snap do
+        ComponentStore.with_store(store_id, fn ->
+          ComponentStore.restore(snap)
+        end)
 
-    interval = div(1000, tick_rate)
+        if mutation = Keyword.get(opts, :mutations) do
+          ComponentStore.with_store(store_id, fn -> mutation.(store_id) end)
+        end
+
+        {
+          snap.entity_ids,
+          snap.systems || systems,
+          snap[:interval] || div(1000, tick_rate)
+        }
+      else
+        eids =
+          ComponentStore.with_store(store_id, fn ->
+            init_scene_entities(scene_module)
+          end)
+
+        {eids, systems, div(1000, tick_rate)}
+      end
+
     Process.send_after(self(), :tick, interval)
 
     {:ok,
@@ -151,6 +235,30 @@ defmodule Lunity.Instance do
   @impl true
   def handle_call(:step, _from, state) do
     {:reply, :ok, Map.put(%{state | status: :paused}, :step_pending, true)}
+  end
+
+  @impl true
+  def handle_call(:snapshot, _from, state) do
+    snap =
+      ComponentStore.with_store(state.store_id, fn ->
+        ComponentStore.snapshot()
+      end)
+
+    snap = Map.merge(snap, %{
+      scene_module: state.scene_module,
+      entity_ids: state.entity_ids,
+      systems: state.systems,
+      interval: state.interval,
+      manager: find_manager_module()
+    })
+
+    {:reply, snap, state}
+  end
+
+  @impl true
+  def handle_call({:run_until, predicate, max_ticks}, _from, state) do
+    {result, ticks_run, state} = do_run_until(state, predicate, max_ticks, 0)
+    {:reply, Tuple.insert_at(result, tuple_size(result), ticks_run), %{state | status: :paused}}
   end
 
   @impl true
@@ -209,6 +317,43 @@ defmodule Lunity.Instance do
 
   defp generate_id do
     :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
+  end
+
+  defp do_run_until(state, _predicate, max_ticks, count) when count >= max_ticks do
+    {{:max_ticks}, count, state}
+  end
+
+  defp do_run_until(state, predicate, max_ticks, count) do
+    ComponentStore.with_store(state.store_id, fn ->
+      dt_tensor = ComponentStore.get_tensor(Lunity.Components.DeltaTime)
+
+      if dt_tensor do
+        dt_s = state.interval / 1000.0
+        ComponentStore.put_tensor(
+          Lunity.Components.DeltaTime,
+          Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
+        )
+      end
+
+      TickRunner.tick(state.systems)
+    end)
+
+    new_count = count + 1
+
+    result =
+      ComponentStore.with_store(state.store_id, fn ->
+        try do
+          predicate.()
+        rescue
+          _ -> false
+        end
+      end)
+
+    if result do
+      {{:halted, result}, new_count, state}
+    else
+      do_run_until(state, predicate, max_ticks, new_count)
+    end
   end
 
   defp resolve_manager_config(nil) do

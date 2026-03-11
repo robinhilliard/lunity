@@ -242,6 +242,102 @@ defmodule Lunity.ComponentStore do
     end
   end
 
+  # -- Snapshot / Restore --------------------------------------------------------
+
+  @doc """
+  Captures the entire store state as a serialisable map.
+
+  Returns `%{entities: [...], tensors: %{mod => tensor}, presence: %{mod => mask},
+  structured: %{mod => [{id, val}]}, meta: state}`.
+  """
+  def snapshot(store_id \\ nil) do
+    sid = store_id || current_store!()
+
+    entities = :ets.tab2list(registry_table(sid))
+    reverse = :ets.tab2list(reverse_registry(sid))
+    meta_entries = :ets.tab2list(component_meta(sid))
+    tensor_entries = :ets.tab2list(tensor_table(sid))
+
+    tensors =
+      for {mod, tensor} <- tensor_entries, is_atom(mod), into: %{} do
+        {mod, tensor}
+      end
+
+    presence =
+      for {{mod, :presence}, mask} <- tensor_entries, into: %{} do
+        {mod, mask}
+      end
+
+    structured =
+      for {mod, opts} <- meta_entries, opts.storage == :structured, into: %{} do
+        tbl = table_name(sid, mod)
+        rows = try do :ets.tab2list(tbl) rescue _ -> [] end
+        {mod, rows}
+      end
+
+    gen_state =
+      case Registry.lookup(Lunity.ComponentStore.Registry, sid) do
+        [{pid, _}] ->
+          try do
+            GenServer.call(pid, :get_state, 5_000)
+          catch
+            :exit, _ -> nil
+          end
+
+        [] ->
+          nil
+      end
+
+    %{
+      entities: entities,
+      reverse: reverse,
+      meta: meta_entries,
+      tensors: tensors,
+      presence: presence,
+      structured: structured,
+      gen_state: gen_state
+    }
+  end
+
+  @doc """
+  Writes a snapshot into the current store, overwriting all existing data.
+
+  The store must already be started and have components registered.
+  """
+  def restore(snap, store_id \\ nil) do
+    sid = store_id || current_store!()
+
+    for {entity_id, index} <- snap.entities do
+      :ets.insert(registry_table(sid), {entity_id, index})
+    end
+
+    for {index, entity_id} <- snap.reverse do
+      :ets.insert(reverse_registry(sid), {index, entity_id})
+    end
+
+    for {mod, tensor} <- snap.tensors do
+      :ets.insert(tensor_table(sid), {mod, tensor})
+    end
+
+    for {mod, mask} <- snap.presence do
+      :ets.insert(tensor_table(sid), {{mod, :presence}, mask})
+    end
+
+    for {mod, rows} <- snap.structured do
+      tbl = table_name(sid, mod)
+      for row <- rows, do: :ets.insert(tbl, row)
+    end
+
+    if gen_state = snap.gen_state do
+      case Registry.lookup(Lunity.ComponentStore.Registry, sid) do
+        [{pid, _}] -> GenServer.call(pid, {:restore_state, gen_state}, 5_000)
+        [] -> :ok
+      end
+    end
+
+    :ok
+  end
+
   # -- GenServer callbacks -------------------------------------------------------
 
   defp via(store_id), do: {:via, Registry, {Lunity.ComponentStore.Registry, store_id}}
@@ -299,6 +395,16 @@ defmodule Lunity.ComponentStore do
     :ets.insert(registry_table(sid), {entity_id, index})
     :ets.insert(reverse_registry(sid), {index, entity_id})
     {:reply, index, state}
+  end
+
+  @impl true
+  def handle_call(:get_state, _from, state) do
+    {:reply, Map.drop(state, [:store_id]), state}
+  end
+
+  @impl true
+  def handle_call({:restore_state, saved}, _from, state) do
+    {:reply, :ok, Map.merge(state, saved)}
   end
 
   @impl true
