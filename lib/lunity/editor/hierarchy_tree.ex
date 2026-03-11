@@ -2,10 +2,13 @@ defmodule Lunity.Editor.HierarchyTree do
   @moduledoc """
   Manages a wxTreeCtrl for the editor's left panel.
 
-  Two root-level sections:
+  Three root-level sections:
 
-  - **Scene** -- nodes from the currently loaded scene, mirroring the scene graph
-  - **Project** -- discovered Entity, Prefab, and Scene modules, sorted alphabetically
+  - **Source** -- nodes from the currently loaded scene definition (the source,
+    not a running instance)
+  - **Game Instances** -- one expandable subtree per running Instance, showing
+    its status (RUNNING/PAUSED) and live entity list
+  - **Project** -- discovered Entity, Prefab, and Scene modules
 
   Selection state is stored in `Lunity.Editor.State` for the inspector to consume.
   """
@@ -40,16 +43,16 @@ defmodule Lunity.Editor.HierarchyTree do
     :wxWindow.setForegroundColour(tree, {0, 0, 0})
 
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
-    scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Scene: (no scene)")
-    project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
+    scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Source: (no scene)")
     instances_root = :wxTreeCtrl.appendItem(tree, root, ~c"Game Instances")
+    project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
     set_item_default_style(tree, scene_root)
-    set_item_default_style(tree, project_root)
     set_item_default_style(tree, instances_root)
+    set_item_default_style(tree, project_root)
 
     :wxTreeCtrl.expand(tree, scene_root)
-    :wxTreeCtrl.expand(tree, project_root)
     :wxTreeCtrl.expand(tree, instances_root)
+    :wxTreeCtrl.expand(tree, project_root)
 
     :wxTreeCtrl.connect(tree, :command_tree_sel_changed)
     :wxTreeCtrl.connect(tree, :command_tree_item_activated)
@@ -74,7 +77,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp do_update_scene(tree, scene_root, nil) do
     :wxTreeCtrl.deleteChildren(tree, scene_root)
-    :wxTreeCtrl.setItemText(tree, scene_root, ~c"Scene: (no scene)")
+    :wxTreeCtrl.setItemText(tree, scene_root, ~c"Source: (no scene)")
     :wxTreeCtrl.expand(tree, scene_root)
   end
 
@@ -84,8 +87,8 @@ defmodule Lunity.Editor.HierarchyTree do
 
     label =
       case State.get_scene_path() do
-        nil -> "Scene"
-        path -> "Scene: #{path}"
+        nil -> "Source"
+        path -> "Source: #{path}"
       end
 
     :wxTreeCtrl.setItemText(tree, scene_root, String.to_charlist(label))
@@ -159,8 +162,10 @@ defmodule Lunity.Editor.HierarchyTree do
       try do
         for id <- Lunity.Instance.list() do
           case Lunity.Instance.get(id) do
-            %{scene_module: mod} -> {id, mod}
-            _ -> nil
+            %{scene_module: mod, entity_ids: eids, status: status} ->
+              {id, mod, eids || [], status}
+            _ ->
+              nil
           end
         end
         |> Enum.reject(&is_nil/1)
@@ -172,17 +177,31 @@ defmodule Lunity.Editor.HierarchyTree do
       item = :wxTreeCtrl.appendItem(tree, instances_root, ~c"(no instances)")
       set_item_default_style(tree, item)
     else
-      Enum.each(instances, fn {instance_id, scene_module} ->
+      Enum.each(instances, fn {instance_id, scene_module, entity_ids, status} ->
         short = scene_module |> Module.split() |> List.last()
-        label = "#{instance_id}  [#{short}]"
-        item = :wxTreeCtrl.appendItem(tree, instances_root, String.to_charlist(label))
-        set_item_default_style(tree, item)
-        :wxTreeCtrl.setItemData(tree, item, {:game_instance, instance_id, scene_module})
+        status_label = status_to_label(status)
+        label = "#{instance_id}  [#{short}] #{status_label}"
+        inst_item = :wxTreeCtrl.appendItem(tree, instances_root, String.to_charlist(label))
+        set_item_default_style(tree, inst_item)
+        :wxTreeCtrl.setItemData(tree, inst_item, {:game_instance, instance_id, scene_module})
+
+        Enum.each(entity_ids, fn eid ->
+          eid_label = inspect(eid)
+          eid_item = :wxTreeCtrl.appendItem(tree, inst_item, String.to_charlist(eid_label))
+          set_item_default_style(tree, eid_item)
+          :wxTreeCtrl.setItemData(tree, eid_item, {:instance_entity, instance_id, eid})
+        end)
+
+        :wxTreeCtrl.expand(tree, inst_item)
       end)
     end
 
     :wxTreeCtrl.expand(tree, instances_root)
   end
+
+  defp status_to_label(:running), do: "RUNNING"
+  defp status_to_label(:paused), do: "PAUSED"
+  defp status_to_label(other), do: to_string(other)
 
   @doc """
   Populate the Project section by discovering loaded modules.
