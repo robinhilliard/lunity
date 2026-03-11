@@ -2,8 +2,8 @@ defmodule Lunity.Editor.Inspector do
   @moduledoc """
   Right-side inspector panel showing component values for the selected entity.
 
-  Uses a wxListCtrl in report mode with Component and Value columns.
-  Updates are polled from the render loop when an instance entity is selected.
+  Uses a wxGrid with Component and Value columns. Updates are polled from the
+  render loop when an instance entity is selected in the hierarchy tree.
   """
 
   use WX.Const
@@ -13,7 +13,6 @@ defmodule Lunity.Editor.Inspector do
   alias Lunity.ComponentStore
 
   @inspector_width 260
-  @wx_lc_report 0x0020
 
   @doc "Create the inspector panel as a child of `parent`. Returns the widget."
   def create(parent) do
@@ -28,38 +27,43 @@ defmodule Lunity.Editor.Inspector do
     :wxStaticText.setFont(label, font)
     :wxSizer.add(sizer, label, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 6)
 
-    list = :wxListCtrl.new(panel, style: @wx_lc_report ||| @wx_sunken_border)
-    :wxListCtrl.insertColumn(list, 0, ~c"Component", width: 130)
-    :wxListCtrl.insertColumn(list, 1, ~c"Value", width: 120)
-    :wxWindow.setBackgroundColour(list, {255, 255, 255})
+    grid = :wxGrid.new(panel, -1)
+    :wxGrid.createGrid(grid, 0, 2)
+    :wxGrid.setColLabelValue(grid, 0, ~c"Component")
+    :wxGrid.setColLabelValue(grid, 1, ~c"Value")
+    :wxGrid.setRowLabelSize(grid, 0)
+    :wxGrid.setColSize(grid, 0, 120)
+    :wxGrid.setColSize(grid, 1, 130)
+    :wxGrid.enableEditing(grid, false)
+    :wxWindow.setBackgroundColour(grid, {255, 255, 255})
 
-    :wxSizer.add(sizer, list, proportion: 1, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 4)
+    :wxSizer.add(sizer, grid, proportion: 1, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 4)
     :wxPanel.setSizer(panel, sizer)
 
-    State.put_inspector(list)
+    State.put_inspector(grid)
     panel
   end
 
   @doc "Refresh the inspector with component data for the currently selected entity."
   def refresh do
-    list = State.get_inspector()
-    unless list, do: throw(:no_inspector)
+    grid = State.get_inspector()
+    unless grid, do: throw(:no_inspector)
 
     case State.get_selection() do
       {:instance_entity, instance_id, entity_id} ->
-        refresh_entity(list, instance_id, entity_id)
+        refresh_entity(grid, instance_id, entity_id)
 
       {:scene_node, _name, _aabb} ->
-        show_message(list, "(scene node selected)")
+        show_message(grid, "(scene node selected)")
 
       _ ->
-        show_message(list, "(no entity selected)")
+        show_message(grid, "(no entity selected)")
     end
   catch
     :no_inspector -> :ok
   end
 
-  defp refresh_entity(list, instance_id, entity_id) do
+  defp refresh_entity(grid, instance_id, entity_id) do
     instance = Lunity.Instance.get(instance_id)
 
     store_id =
@@ -69,7 +73,7 @@ defmodule Lunity.Editor.Inspector do
       end
 
     unless store_id do
-      show_message(list, "(instance not found)")
+      show_message(grid, "(instance not found)")
       throw(:done)
     end
 
@@ -102,15 +106,19 @@ defmodule Lunity.Editor.Inspector do
         |> Enum.sort_by(fn {name, _} -> name end)
       end)
 
-    :wxListCtrl.deleteAllItems(list)
+    clear_grid(grid)
 
     if rows == [] do
-      show_message(list, "(no components)")
+      show_message(grid, "(no components)")
     else
+      :wxGrid.appendRows(grid, numRows: length(rows))
+
       Enum.with_index(rows, fn {name, value}, idx ->
-        :wxListCtrl.insertItem(list, idx, String.to_charlist(name))
-        :wxListCtrl.setItem(list, idx, 1, String.to_charlist(value))
+        :wxGrid.setCellValue(grid, idx, 0, String.to_charlist(name))
+        :wxGrid.setCellValue(grid, idx, 1, String.to_charlist(value))
       end)
+
+      :wxGrid.autoSizeColumns(grid)
     end
   catch
     :done -> :ok
@@ -129,8 +137,14 @@ defmodule Lunity.Editor.Inspector do
   defp format_number(n) when is_float(n), do: :erlang.float_to_binary(n, decimals: 3)
   defp format_number(n), do: to_string(n)
 
-  defp show_message(list, msg) do
-    :wxListCtrl.deleteAllItems(list)
-    :wxListCtrl.insertItem(list, 0, String.to_charlist(msg))
+  defp clear_grid(grid) do
+    rows = :wxGrid.getNumberRows(grid)
+    if rows > 0, do: :wxGrid.deleteRows(grid, numRows: rows)
+  end
+
+  defp show_message(grid, msg) do
+    clear_grid(grid)
+    :wxGrid.appendRows(grid, numRows: 1)
+    :wxGrid.setCellValue(grid, 0, 0, String.to_charlist(msg))
   end
 end
