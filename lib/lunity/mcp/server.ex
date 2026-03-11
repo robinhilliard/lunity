@@ -472,6 +472,110 @@ defmodule Lunity.MCP.Server do
     input_schema(%{type: "object", properties: %{}})
   end
 
+  deftool "instance_snapshot" do
+    meta do
+      name("Instance Snapshot")
+
+      description(
+        "Capture a full snapshot of a game instance's ECS state. Returns a snapshot ID that can be used with instance_clone or instance_fork. Optionally pass instance_id (defaults to first instance)."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        instance_id: %{type: "string", description: "Instance ID to snapshot"}
+      }
+    })
+  end
+
+  deftool "instance_clone" do
+    meta do
+      name("Instance Clone")
+
+      description(
+        "Create a new instance from a previously captured snapshot. The clone starts running immediately with the same ECS state as the snapshot. Optionally provide a new instance ID."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        snapshot_id: %{
+          type: "string",
+          description: "Snapshot ID from instance_snapshot"
+        },
+        new_id: %{type: "string", description: "ID for the new instance (auto-generated if omitted)"}
+      },
+      required: ["snapshot_id"]
+    })
+  end
+
+  deftool "instance_fork" do
+    meta do
+      name("Instance Fork")
+
+      description(
+        "Snapshot an instance and immediately create a clone. Combines instance_snapshot + instance_clone. Optionally re-seed RandomKey components for divergent simulation runs."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        instance_id: %{type: "string", description: "Instance to fork (defaults to first)"},
+        new_id: %{type: "string", description: "ID for the forked instance"},
+        reseed: %{
+          type: "boolean",
+          description: "Re-seed RandomKey components with fresh values (default true)",
+          default: true
+        }
+      }
+    })
+  end
+
+  deftool "run_ticks" do
+    meta do
+      name("Run Ticks")
+
+      description(
+        "Run N ticks synchronously on an instance. The instance is paused after completion. Returns tick count."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        instance_id: %{type: "string", description: "Instance ID (defaults to first)"},
+        count: %{type: "integer", description: "Number of ticks to run", default: 100}
+      }
+    })
+  end
+
+  deftool "run_until" do
+    meta do
+      name("Run Until")
+
+      description(
+        "Run ticks synchronously until an Elixir expression evaluates to truthy, or max_ticks is reached. The expression runs inside the instance's ComponentStore context, so you can read component values directly. Instance is paused after completion."
+      )
+    end
+
+    input_schema(%{
+      type: "object",
+      properties: %{
+        instance_id: %{type: "string", description: "Instance ID (defaults to first)"},
+        predicate: %{
+          type: "string",
+          description:
+            "Elixir expression that returns truthy to halt. Runs inside with_store. Example: Lunity.ComponentStore.get(Lunity.Components.Position, :ball) |> elem(0) > 20"
+        },
+        max_ticks: %{type: "integer", description: "Maximum ticks before giving up", default: 10000}
+      },
+      required: ["predicate"]
+    })
+  end
+
   # Apply project context from state (set via set_project tool) so Lunity.priv_dir etc. work
   defp apply_project_context(state) do
     if cwd = state[:project_cwd] do
@@ -1055,8 +1159,184 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
+  defp do_handle_tool_call("instance_snapshot", args, state) do
+    id = resolve_single_instance(args)
+
+    case Lunity.Instance.snapshot(id) do
+      {:error, reason} ->
+        content = "Snapshot failed: #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+
+      snap ->
+        snap_id = "snap_#{:erlang.phash2(snap, 999_999)}"
+        snapshots = Map.get(state, :snapshots, %{})
+        state = Map.put(state, :snapshots, Map.put(snapshots, snap_id, snap))
+
+        content =
+          Jason.encode!(%{
+            snapshot_id: snap_id,
+            instance_id: id,
+            entity_count: length(snap.entities),
+            tensor_components: map_size(snap.tensors),
+            structured_components: map_size(snap.structured)
+          })
+
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+    end
+  end
+
+  defp do_handle_tool_call("instance_clone", %{"snapshot_id" => snap_id} = args, state) do
+    snapshots = Map.get(state, :snapshots, %{})
+
+    case Map.get(snapshots, snap_id) do
+      nil ->
+        content = "Snapshot not found: #{snap_id}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+
+      snap ->
+        opts = if new_id = Map.get(args, "new_id"), do: [id: new_id], else: []
+
+        case Lunity.Instance.clone(snap, opts) do
+          {:ok, _pid} ->
+            new_instance_id = if new_id = Map.get(args, "new_id"), do: new_id, else: "(auto)"
+            content = "Cloned to instance: #{new_instance_id}"
+            {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+
+          {:error, reason} ->
+            content = "Clone failed: #{inspect(reason)}"
+            {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+        end
+    end
+  end
+
+  defp do_handle_tool_call("instance_fork", args, state) do
+    id = resolve_single_instance(args)
+    reseed = Map.get(args, "reseed", true)
+
+    case Lunity.Instance.snapshot(id) do
+      {:error, reason} ->
+        content = "Fork failed (snapshot): #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+
+      snap ->
+        new_id = Map.get(args, "new_id", Lunity.Instance.generate_id_external())
+
+        mutations =
+          if reseed do
+            fn _store_id ->
+              for eid <- snap.entity_ids do
+                if Lunity.ComponentStore.exists?(Lunity.Components.RandomKey, eid) do
+                  seed = :erlang.phash2({eid, System.monotonic_time(), new_id})
+                  key = Nx.Random.key(seed)
+                  split = Nx.Random.split(key)
+                  k1 = split[0]
+                  Lunity.ComponentStore.put(Lunity.Components.RandomKey, eid,
+                    Nx.to_flat_list(k1) |> List.to_tuple())
+                end
+              end
+            end
+          end
+
+        opts = [id: new_id]
+        opts = if mutations, do: Keyword.put(opts, :mutations, mutations), else: opts
+
+        case Lunity.Instance.clone(snap, opts) do
+          {:ok, _pid} ->
+            content =
+              Jason.encode!(%{
+                forked_from: id,
+                new_instance_id: new_id,
+                reseeded: reseed
+              })
+
+            {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+
+          {:error, reason} ->
+            content = "Fork failed (clone): #{inspect(reason)}"
+            {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+        end
+    end
+  end
+
+  defp do_handle_tool_call("run_ticks", args, state) do
+    id = resolve_single_instance(args)
+    count = Map.get(args, "count", 100)
+
+    Lunity.Instance.pause(id)
+
+    case Lunity.Instance.run_ticks(id, count) do
+      {:max_ticks, n} ->
+        content = Jason.encode!(%{instance_id: id, ticks_run: n, status: "completed"})
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+
+      {:error, reason} ->
+        content = "run_ticks failed: #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+
+      other ->
+        content = "run_ticks: #{inspect(other)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+    end
+  end
+
+  defp do_handle_tool_call("run_until", %{"predicate" => pred_str} = args, state) do
+    id = resolve_single_instance(args)
+    max = Map.get(args, "max_ticks", 10_000)
+
+    predicate =
+      try do
+        {fun, _} = Code.eval_string("fn -> #{pred_str} end")
+        fun
+      rescue
+        e ->
+          throw({:eval_error, Exception.message(e)})
+      end
+
+    Lunity.Instance.pause(id)
+
+    case Lunity.Instance.run_until(id, predicate, max_ticks: max) do
+      {:halted, result, n} ->
+        content =
+          Jason.encode!(%{
+            instance_id: id,
+            status: "halted",
+            result: inspect(result),
+            ticks_run: n
+          })
+
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+
+      {:max_ticks, n} ->
+        content =
+          Jason.encode!(%{instance_id: id, status: "max_ticks", ticks_run: n})
+
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+
+      {:error, reason} ->
+        content = "run_until failed: #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+    end
+  catch
+    {:eval_error, msg} ->
+      content = "Predicate eval error: #{msg}"
+      {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
   defp do_handle_tool_call(_tool_name, _args, state) do
     {:error, :tool_not_implemented, state}
+  end
+
+  defp resolve_single_instance(args) do
+    case Map.get(args, "instance_id") do
+      nil ->
+        case Lunity.Instance.list() do
+          [id | _] -> id
+          [] -> raise "No instances running"
+        end
+
+      id ->
+        id
+    end
   end
 
   defp orbit_to_map(nil), do: nil

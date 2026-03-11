@@ -319,6 +319,9 @@ defmodule Lunity.Instance do
     :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
   end
 
+  @doc false
+  def generate_id_external, do: generate_id()
+
   defp do_run_until(state, _predicate, max_ticks, count) when count >= max_ticks do
     {{:max_ticks}, count, state}
   end
