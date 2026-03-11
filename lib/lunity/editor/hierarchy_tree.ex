@@ -35,17 +35,14 @@ defmodule Lunity.Editor.HierarchyTree do
     tree = :wxTreeCtrl.new(parent, style: style)
     :wxWindow.setMinSize(tree, {@tree_width, -1})
 
-    t = theme()
-    :wxWindow.setBackgroundColour(tree, t.window_bg)
-    :wxWindow.setForegroundColour(tree, t.window_fg)
+    native_bg = :wxTreeCtrl.getBackgroundColour(tree)
+    native_fg = :wxTreeCtrl.getForegroundColour(tree)
+    State.put_tree_native_colours(native_bg, native_fg)
 
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
     scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Source: (no scene)")
     instances_root = :wxTreeCtrl.appendItem(tree, root, ~c"Game Instances")
     project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
-    set_item_default_style(tree, scene_root)
-    set_item_default_style(tree, instances_root)
-    set_item_default_style(tree, project_root)
 
     :wxTreeCtrl.expand(tree, scene_root)
     :wxTreeCtrl.expand(tree, instances_root)
@@ -456,11 +453,9 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp set_item_default_style(tree, item) do
     try do
-      t = theme()
-      {r, g, b} = t.window_bg
-      {fr, fg, fb} = t.window_fg
-      :wxTreeCtrl.setItemBackgroundColour(tree, item, {r, g, b, 255})
-      :wxTreeCtrl.setItemTextColour(tree, item, {fr, fg, fb, 255})
+      {bg, fg} = State.get_tree_native_colours()
+      :wxTreeCtrl.setItemBackgroundColour(tree, item, bg)
+      :wxTreeCtrl.setItemTextColour(tree, item, fg)
     rescue
       _ -> :ok
     end

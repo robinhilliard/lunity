@@ -498,6 +498,20 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Store the tree's native bg/fg colours (read once at creation)."
+  def put_tree_native_colours(bg, fg) do
+    :ets.insert(@table, {:tree_native_colours, {bg, fg}})
+    :ok
+  end
+
+  @doc "Get the tree's native colours. Returns {bg, fg}."
+  def get_tree_native_colours do
+    case :ets.lookup(@table, :tree_native_colours) do
+      [{:tree_native_colours, colours}] -> colours
+      [] -> {{255, 255, 255, 255}, {0, 0, 0, 255}}
+    end
+  end
+
   @doc "Store the currently selected item in the hierarchy tree."
   def put_selection(selection) do
     :ets.insert(@table, {:tree_selection, selection})
