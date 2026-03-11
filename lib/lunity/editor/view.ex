@@ -28,6 +28,11 @@ defmodule Lunity.Editor.View do
   @split_min 0.15
   @split_max 0.85
 
+  @tool_play 1001
+  @tool_pause 1002
+  @tool_step 1003
+  @tool_stop 1004
+
   def run(opts \\ []) do
     default_opts = [
       depth_testing: true,
@@ -44,8 +49,9 @@ defmodule Lunity.Editor.View do
 
   @impl true
   def setup_layout(frame, gl_canvas) do
-    sizer = :wxBoxSizer.new(@wx_horizontal)
+    create_transport_toolbar(frame)
 
+    sizer = :wxBoxSizer.new(@wx_horizontal)
     tree = HierarchyTree.create(frame)
     :wxSizer.add(sizer, tree, proportion: 0, flag: @wx_expand)
     :wxSizer.add(sizer, gl_canvas, proportion: 1, flag: @wx_expand)
@@ -53,6 +59,26 @@ defmodule Lunity.Editor.View do
     State.put_frame(frame)
 
     sizer
+  end
+
+  defp create_transport_toolbar(frame) do
+    toolbar = :wxFrame.createToolBar(frame)
+
+    play_bmp = :wxArtProvider.getBitmap(~c"wxART_GO_FORWARD")
+    pause_bmp = :wxArtProvider.getBitmap(~c"wxART_CROSS_MARK")
+    step_bmp = :wxArtProvider.getBitmap(~c"wxART_GO_DOWN")
+    stop_bmp = :wxArtProvider.getBitmap(~c"wxART_DELETE")
+
+    :wxToolBar.addTool(toolbar, @tool_play, ~c"Play (F5)", play_bmp)
+    :wxToolBar.addTool(toolbar, @tool_pause, ~c"Pause (F5)", pause_bmp)
+    :wxToolBar.addTool(toolbar, @tool_step, ~c"Step (F6)", step_bmp)
+    :wxToolBar.addSeparator(toolbar)
+    :wxToolBar.addTool(toolbar, @tool_stop, ~c"Stop (Esc)", stop_bmp)
+    :wxToolBar.realize(toolbar)
+
+    :wxToolBar.connect(toolbar, :command_menu_selected)
+
+    toolbar
   end
 
   @impl true
@@ -375,7 +401,87 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
+  # F5 = toggle play/pause, F6 = step, Escape = stop watching
+  def handle_event({:key, 344}, state) do
+    handle_transport(:play_pause)
+    {:ok, state}
+  end
+
+  def handle_event({:key, 345}, state) do
+    handle_transport(:step)
+    {:ok, state}
+  end
+
+  def handle_event({:key, 27}, state) do
+    handle_transport(:stop)
+    {:ok, state}
+  end
+
+  # Toolbar button clicks
+  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_play, _, _}}, state) do
+    handle_transport(:play)
+    {:ok, state}
+  end
+
+  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_pause, _, _}}, state) do
+    handle_transport(:pause)
+    {:ok, state}
+  end
+
+  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_step, _, _}}, state) do
+    handle_transport(:step)
+    {:ok, state}
+  end
+
+  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_stop, _, _}}, state) do
+    handle_transport(:stop)
+    {:ok, state}
+  end
+
   def handle_event(_event, state), do: {:ok, state}
+
+  defp handle_transport(:play_pause) do
+    case State.get_editor_mode() do
+      :watch -> handle_transport(:pause)
+      :paused -> handle_transport(:play)
+      :edit -> :ok
+    end
+  end
+
+  defp handle_transport(:play) do
+    case State.get_watching_instance() do
+      nil -> :ok
+      id ->
+        Lunity.Instance.resume(id)
+        State.put_editor_mode(:watch)
+        State.update_window_title()
+    end
+  end
+
+  defp handle_transport(:pause) do
+    case State.get_watching_instance() do
+      nil -> :ok
+      id ->
+        Lunity.Instance.pause(id)
+        State.put_editor_mode(:paused)
+        State.update_window_title()
+    end
+  end
+
+  defp handle_transport(:step) do
+    case State.get_watching_instance() do
+      nil -> :ok
+      id ->
+        Lunity.Instance.step(id)
+        State.put_editor_mode(:paused)
+        State.update_window_title()
+    end
+  end
+
+  defp handle_transport(:stop) do
+    State.clear_watching_instance()
+    State.update_window_title()
+  end
 
   # --- Click-to-select via GPU pick ---
 
