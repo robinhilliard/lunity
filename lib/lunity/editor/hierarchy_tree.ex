@@ -294,6 +294,12 @@ defmodule Lunity.Editor.HierarchyTree do
           State.put_selection(data)
           data
 
+        {:instance_entity, _instance_id, _entity_id} = data ->
+          set_item_style(tree, item, @select_bg, @select_fg)
+          State.put_tree_selected_item(item)
+          State.put_selection(data)
+          data
+
         data when is_tuple(data) ->
           State.put_selection(data)
           data

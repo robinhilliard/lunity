@@ -738,4 +738,22 @@ defmodule Lunity.Editor.State do
     :ets.insert(@table, {:scene, scene})
     :ok
   end
+
+  # ---------------------------------------------------------------------------
+  # Inspector panel
+  # ---------------------------------------------------------------------------
+
+  @doc "Store the inspector wxListCtrl reference."
+  def put_inspector(list) do
+    :ets.insert(@table, {:inspector, list})
+    :ok
+  end
+
+  @doc "Get the inspector wxListCtrl, or nil."
+  def get_inspector do
+    case :ets.lookup(@table, :inspector) do
+      [{:inspector, list}] -> list
+      [] -> nil
+    end
+  end
 end

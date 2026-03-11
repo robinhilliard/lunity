@@ -21,6 +21,7 @@ defmodule Lunity.Editor.View do
   alias EAGL.Node
   alias Lunity.Editor.State
   alias Lunity.Editor.HierarchyTree
+  alias Lunity.Editor.Inspector
   alias Lunity.PrefabLoader
   alias Lunity.SceneLoader
 
@@ -53,8 +54,10 @@ defmodule Lunity.Editor.View do
 
     sizer = :wxBoxSizer.new(@wx_horizontal)
     tree = HierarchyTree.create(frame)
+    inspector = Inspector.create(frame)
     :wxSizer.add(sizer, tree, proportion: 0, flag: @wx_expand)
     :wxSizer.add(sizer, gl_canvas, proportion: 1, flag: @wx_expand)
+    :wxSizer.add(sizer, inspector, proportion: 0, flag: @wx_expand)
 
     State.put_frame(frame)
 
@@ -122,6 +125,7 @@ defmodule Lunity.Editor.View do
     state = process_watch_command(state)
     editor_mode = State.get_editor_mode()
     if editor_mode in [:watch, :paused], do: sync_ecs_to_scene()
+    if rem(state.frame, 10) == 0, do: Inspector.refresh()
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
 
