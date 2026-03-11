@@ -20,7 +20,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   @tree_width 220
 
-  @wx_tr_twist_buttons 0x0010
+  @wx_tr_has_buttons 0x0001
   @wx_tr_lines_at_root 0x0004
   @wx_tr_hide_root 0x0800
 
@@ -31,7 +31,7 @@ defmodule Lunity.Editor.HierarchyTree do
   in the editor ETS state and connects selection events. Returns the widget.
   """
   def create(parent) do
-    style = @wx_tr_twist_buttons ||| @wx_tr_lines_at_root ||| @wx_tr_hide_root ||| @wx_sunken_border
+    style = @wx_tr_has_buttons ||| @wx_tr_lines_at_root ||| @wx_tr_hide_root ||| @wx_sunken_border
     tree = :wxTreeCtrl.new(parent, style: style)
     :wxWindow.setMinSize(tree, {@tree_width, -1})
 
@@ -40,6 +40,7 @@ defmodule Lunity.Editor.HierarchyTree do
     State.put_tree_native_colours(native_bg, native_fg)
 
     t = theme()
+    :wxWindow.setBackgroundColour(tree, t.window_bg)
     :wxWindow.setForegroundColour(tree, t.window_fg)
 
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
