@@ -50,6 +50,9 @@ defmodule Lunity.Editor.View do
 
   @impl true
   def setup_layout(frame, gl_canvas) do
+    theme = Lunity.Editor.Theme.detect()
+    State.put_theme(theme)
+
     create_transport_toolbar(frame)
 
     sizer = :wxBoxSizer.new(@wx_horizontal)

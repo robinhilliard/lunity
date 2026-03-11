@@ -756,4 +756,35 @@ defmodule Lunity.Editor.State do
       [] -> nil
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Theme
+  # ---------------------------------------------------------------------------
+
+  @doc "Store the detected theme colours."
+  def put_theme(theme) when is_map(theme) do
+    :ets.insert(@table, {:theme, theme})
+    :ok
+  end
+
+  @doc "Get the theme colours, or a fallback light theme."
+  def get_theme do
+    case :ets.lookup(@table, :theme) do
+      [{:theme, theme}] ->
+        theme
+
+      [] ->
+        %{
+          dark?: false,
+          window_bg: {255, 255, 255},
+          window_fg: {0, 0, 0},
+          select_bg: {50, 100, 180},
+          select_fg: {255, 255, 255},
+          hover_bg: {200, 220, 240},
+          hover_fg: {0, 0, 0},
+          panel_bg: {245, 245, 245},
+          separator: {220, 220, 220}
+        }
+    end
+  end
 end

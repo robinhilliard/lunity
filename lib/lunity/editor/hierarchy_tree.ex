@@ -24,10 +24,7 @@ defmodule Lunity.Editor.HierarchyTree do
   @wx_tr_lines_at_root 0x0004
   @wx_tr_hide_root 0x0800
 
-  @hover_bg {200, 220, 240}
-  @hover_fg {0, 0, 0}
-  @select_bg {50, 100, 180}
-  @select_fg {255, 255, 255}
+  defp theme, do: State.get_theme()
 
   @doc """
   Create the wxTreeCtrl as a child of `parent`. Stores the tree reference
@@ -38,9 +35,9 @@ defmodule Lunity.Editor.HierarchyTree do
     tree = :wxTreeCtrl.new(parent, style: style)
     :wxWindow.setMinSize(tree, {@tree_width, -1})
 
-    # Force white background and black text so tree is readable on macOS dark mode
-    :wxWindow.setBackgroundColour(tree, {255, 255, 255})
-    :wxWindow.setForegroundColour(tree, {0, 0, 0})
+    t = theme()
+    :wxWindow.setBackgroundColour(tree, t.window_bg)
+    :wxWindow.setForegroundColour(tree, t.window_fg)
 
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
     scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Source: (no scene)")
@@ -281,21 +278,24 @@ defmodule Lunity.Editor.HierarchyTree do
 
       case :wxTreeCtrl.getItemData(tree, item) do
         {:scene_node, name} = data ->
-          set_item_style(tree, item, @select_bg, @select_fg)
+          t = theme()
+          set_item_style(tree, item, t.select_bg, t.select_fg)
           State.put_tree_selected_item(item)
           selection = resolve_scene_node_selection(name)
           State.put_selection(selection)
           data
 
         {:game_instance, instance_id, scene_module} = data ->
-          set_item_style(tree, item, @select_bg, @select_fg)
+          t = theme()
+          set_item_style(tree, item, t.select_bg, t.select_fg)
           State.put_tree_selected_item(item)
           State.put_watch_command({:watch, instance_id, scene_module})
           State.put_selection(data)
           data
 
         {:instance_entity, _instance_id, _entity_id} = data ->
-          set_item_style(tree, item, @select_bg, @select_fg)
+          t = theme()
+          set_item_style(tree, item, t.select_bg, t.select_fg)
           State.put_tree_selected_item(item)
           State.put_selection(data)
           data
@@ -359,7 +359,8 @@ defmodule Lunity.Editor.HierarchyTree do
       if item != 0 do
         if prev_hover != nil and prev_hover != item, do: reset_item_style(tree, prev_hover)
         sel_item = State.get_tree_selected_item()
-        if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
+        t = theme()
+        if item != sel_item, do: set_item_style(tree, item, t.hover_bg, t.hover_fg)
         State.put_tree_hover_item(item)
 
         case :wxTreeCtrl.getItemData(tree, item) do
@@ -413,7 +414,8 @@ defmodule Lunity.Editor.HierarchyTree do
             prev_sel = State.get_tree_selected_item()
             State.put_tree_selected_item(item)
             if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
-            set_item_style(tree, item, @select_bg, @select_fg)
+            t = theme()
+            set_item_style(tree, item, t.select_bg, t.select_fg)
             :wxTreeCtrl.selectItem(tree, item)
             :wxTreeCtrl.ensureVisible(tree, item)
             # Give tree focus so selection shows blue (macOS uses gray when unfocused)
@@ -454,8 +456,11 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp set_item_default_style(tree, item) do
     try do
-      :wxTreeCtrl.setItemBackgroundColour(tree, item, {255, 255, 255, 255})
-      :wxTreeCtrl.setItemTextColour(tree, item, {0, 0, 0, 255})
+      t = theme()
+      {r, g, b} = t.window_bg
+      {fr, fg, fb} = t.window_fg
+      :wxTreeCtrl.setItemBackgroundColour(tree, item, {r, g, b, 255})
+      :wxTreeCtrl.setItemTextColour(tree, item, {fr, fg, fb, 255})
     rescue
       _ -> :ok
     end
@@ -482,7 +487,8 @@ defmodule Lunity.Editor.HierarchyTree do
           item ->
             if prev_hover, do: reset_item_style(tree, prev_hover)
             sel_item = State.get_tree_selected_item()
-            if item != sel_item, do: set_item_style(tree, item, @hover_bg, @hover_fg)
+            t = theme()
+            if item != sel_item, do: set_item_style(tree, item, t.hover_bg, t.hover_fg)
             State.put_tree_hover_item(item)
         end
 
@@ -590,7 +596,8 @@ defmodule Lunity.Editor.HierarchyTree do
       sel_item = State.get_tree_selected_item()
 
       if item == sel_item do
-        set_item_style(tree, item, @select_bg, @select_fg)
+        t = theme()
+        set_item_style(tree, item, t.select_bg, t.select_fg)
       else
         set_item_default_style(tree, item)
       end

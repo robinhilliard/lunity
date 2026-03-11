@@ -16,15 +16,18 @@ defmodule Lunity.Editor.Inspector do
 
   @doc "Create the inspector panel as a child of `parent`. Returns the widget."
   def create(parent) do
+    t = State.get_theme()
+
     panel = :wxPanel.new(parent)
     :wxWindow.setMinSize(panel, {@inspector_width, -1})
-    :wxWindow.setBackgroundColour(panel, {245, 245, 245})
+    :wxWindow.setBackgroundColour(panel, t.panel_bg)
 
     sizer = :wxBoxSizer.new(@wx_vertical)
 
     label = :wxStaticText.new(panel, -1, ~c"Inspector")
     font = :wxFont.new(12, 70, 90, 92)
     :wxStaticText.setFont(label, font)
+    :wxStaticText.setForegroundColour(label, t.window_fg)
     :wxSizer.add(sizer, label, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 6)
 
     grid = :wxGrid.new(panel, -1)
@@ -35,7 +38,8 @@ defmodule Lunity.Editor.Inspector do
     :wxGrid.setColSize(grid, 0, 120)
     :wxGrid.setColSize(grid, 1, 130)
     :wxGrid.enableEditing(grid, false)
-    :wxWindow.setBackgroundColour(grid, {255, 255, 255})
+    :wxWindow.setBackgroundColour(grid, t.window_bg)
+    :wxWindow.setForegroundColour(grid, t.window_fg)
 
     :wxSizer.add(sizer, grid, proportion: 1, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 4)
     :wxPanel.setSizer(panel, sizer)
