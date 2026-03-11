@@ -40,6 +40,7 @@ defmodule Lunity.Application do
     [
       Lunity.Input.SessionManager,
       {Registry, keys: :unique, name: Lunity.Instance.Registry},
+      {Registry, keys: :unique, name: Lunity.ComponentStore.Registry},
       {DynamicSupervisor, name: Lunity.Instance.Supervisor, strategy: :one_for_one},
       Lunity.Web.ConnectionReaper
     ]

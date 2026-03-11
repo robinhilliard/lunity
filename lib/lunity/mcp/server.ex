@@ -850,22 +850,32 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  defp do_handle_tool_call("pause", _args, state) do
-    State.put_game_paused(true)
-    content = "Game paused."
+  defp do_handle_tool_call("pause", args, state) do
+    targets = resolve_instance_targets(args)
+    Enum.each(targets, &Lunity.Instance.pause/1)
+    content = "Paused instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  defp do_handle_tool_call("step", _args, state) do
-    State.put_step_request()
-    content = "Step requested. One tick will run when paused."
+  defp do_handle_tool_call("step", args, state) do
+    targets = resolve_instance_targets(args)
+    Enum.each(targets, &Lunity.Instance.step/1)
+    content = "Step requested for instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 
-  defp do_handle_tool_call("resume", _args, state) do
-    State.put_game_paused(false)
-    content = "Game resumed."
+  defp do_handle_tool_call("resume", args, state) do
+    targets = resolve_instance_targets(args)
+    Enum.each(targets, &Lunity.Instance.resume/1)
+    content = "Resumed instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+  end
+
+  defp resolve_instance_targets(args) do
+    case args && Map.get(args, "instance_id") do
+      nil -> Lunity.Instance.list()
+      id -> [id]
+    end
   end
 
   defp do_handle_tool_call(
@@ -900,54 +910,78 @@ defmodule Lunity.MCP.Server do
   end
 
   defp do_handle_tool_call("ecs_dump", args, state) do
-    registry = :ets.tab2list(:lunity_entity_registry)
+    instance_id = args && Map.get(args, "instance_id")
 
-    all_tensor_mods =
-      :ets.tab2list(:lunity_component_meta)
-      |> Enum.flat_map(fn {mod, opts} ->
-        if opts.storage == :tensor, do: [mod], else: []
-      end)
-
-    component_mods =
-      case args && Map.get(args, "components") do
-        list when is_list(list) and list != [] ->
-          requested = MapSet.new(list)
-
-          Enum.filter(all_tensor_mods, fn mod ->
-            MapSet.member?(requested, inspect(mod))
-          end)
-
-        _ ->
-          all_tensor_mods
+    store_ids =
+      case instance_id do
+        nil -> Lunity.Instance.list()
+        id -> [id]
       end
 
-    entities =
-      Enum.map(registry, fn {entity_id, index} ->
-        components =
-          Map.new(component_mods, fn mod ->
-            val =
-              try do
-                Lunity.ComponentStore.get(mod, entity_id)
-              rescue
-                _ -> nil
-              end
+    results =
+      Enum.flat_map(store_ids, fn sid ->
+        Lunity.ComponentStore.with_store(sid, fn ->
+          registry_table = :"lunity_registry_#{sid}"
+          meta_table = :"lunity_meta_#{sid}"
 
-            formatted =
-              case val do
-                nil -> nil
-                t when is_tuple(t) -> Tuple.to_list(t)
-                n when is_number(n) -> n
-                other -> inspect(other)
-              end
+          registry =
+            try do
+              :ets.tab2list(registry_table)
+            rescue
+              _ -> []
+            end
 
-            {inspect(mod), formatted}
+          all_tensor_mods =
+            try do
+              :ets.tab2list(meta_table)
+              |> Enum.flat_map(fn {mod, opts} ->
+                if opts.storage == :tensor, do: [mod], else: []
+              end)
+            rescue
+              _ -> []
+            end
+
+          component_mods =
+            case args && Map.get(args, "components") do
+              list when is_list(list) and list != [] ->
+                requested = MapSet.new(list)
+
+                Enum.filter(all_tensor_mods, fn mod ->
+                  MapSet.member?(requested, inspect(mod))
+                end)
+
+              _ ->
+                all_tensor_mods
+            end
+
+          Enum.map(registry, fn {entity_id, index} ->
+            components =
+              Map.new(component_mods, fn mod ->
+                val =
+                  try do
+                    Lunity.ComponentStore.get(mod, entity_id)
+                  rescue
+                    _ -> nil
+                  end
+
+                formatted =
+                  case val do
+                    nil -> nil
+                    t when is_tuple(t) -> Tuple.to_list(t)
+                    n when is_number(n) -> n
+                    other -> inspect(other)
+                  end
+
+                {inspect(mod), formatted}
+              end)
+
+            %{id: inspect(entity_id), instance: sid, index: index, components: components}
           end)
-
-        %{id: inspect(entity_id), index: index, components: components}
+        end)
       end)
       |> Enum.sort_by(& &1.index)
 
-    content = Jason.encode!(%{entity_count: length(entities), entities: entities})
+    content = Jason.encode!(%{entity_count: length(results), entities: results})
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
 

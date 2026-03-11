@@ -625,8 +625,23 @@ defmodule Lunity.Editor.State do
   def clear_watching_instance do
     :ets.delete(@table, :watching_instance)
     :ets.delete(@table, :instance_entity_map)
+    :ets.delete(@table, :instance_store_id)
     :ets.delete(@table, :position_component)
     :ok
+  end
+
+  @doc "Store the ComponentStore ID for the watched instance."
+  def put_instance_store_id(store_id) do
+    :ets.insert(@table, {:instance_store_id, store_id})
+    :ok
+  end
+
+  @doc "Get the watched instance's store ID, or nil."
+  def get_instance_store_id do
+    case :ets.lookup(@table, :instance_store_id) do
+      [{:instance_store_id, id}] -> id
+      [] -> nil
+    end
   end
 
   @doc "Store the node-name → entity-id mapping for the watched instance."

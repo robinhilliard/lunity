@@ -2,21 +2,24 @@ defmodule Lunity.Instance do
   @moduledoc """
   A running game instance.
 
-  Each instance has a unique ID, loads a scene, and manages the entities
-  created for that scene. Entity IDs are scoped to the instance:
-  `{instance_id, :ball}` is a different entity from `{other_instance, :ball}`.
+  Each instance has a unique ID, its own ComponentStore, and manages the
+  entities created for its scene. Entity IDs are simple names (`:ball`,
+  `:left_paddle`) because store-level isolation replaces the old
+  `{instance_id, name}` scoping.
 
-  Instances track metadata -- the scene module and entity list -- but do NOT
-  manage ECS state directly. Component data lives in the global ComponentStore
-  tensors, indexed by entity.
+  Instances are headless by default -- they own ECS state but have no
+  rendering dependency. Viewers (editor, web, native) observe an
+  instance by reading from its store.
 
-  When an instance stops, all its entities are deallocated and their component
-  values zeroed.
+  When an instance stops, its ComponentStore is shut down, dropping all
+  ETS tables and component data.
   """
 
   use GenServer
 
-  defstruct [:id, :scene_module, :entity_ids, :status]
+  defstruct [:id, :scene_module, :entity_ids, :store_id, :status, :systems, :interval, :last_tick]
+
+  alias Lunity.{ComponentStore, TickRunner}
 
   # -- Public API ----------------------------------------------------------------
 
@@ -25,7 +28,7 @@ defmodule Lunity.Instance do
 
   Options:
   - `:id` - instance ID (default: auto-generated)
-  - `:shader_program` - OpenGL shader for scene loading
+  - `:manager` - the Manager module to read components/systems/tick_rate from
   """
   def start(scene_module, opts \\ []) do
     id = Keyword.get(opts, :id, generate_id())
@@ -36,7 +39,7 @@ defmodule Lunity.Instance do
     )
   end
 
-  @doc "Stops a game instance and cleans up its entities."
+  @doc "Stops a game instance and cleans up its store."
   def stop(instance_id) do
     case Registry.lookup(Lunity.Instance.Registry, instance_id) do
       [{pid, _}] -> GenServer.stop(pid)
@@ -52,8 +55,39 @@ defmodule Lunity.Instance do
   @doc "Gets instance metadata."
   def get(instance_id) do
     case Registry.lookup(Lunity.Instance.Registry, instance_id) do
-      [{pid, _}] -> GenServer.call(pid, :get)
-      [] -> nil
+      [{pid, _}] ->
+        try do
+          GenServer.call(pid, :get, 15_000)
+        catch
+          :exit, _ -> nil
+        end
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc "Pauses ticking for this instance."
+  def pause(instance_id) do
+    case Registry.lookup(Lunity.Instance.Registry, instance_id) do
+      [{pid, _}] -> GenServer.call(pid, :pause)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @doc "Resumes ticking for this instance."
+  def resume(instance_id) do
+    case Registry.lookup(Lunity.Instance.Registry, instance_id) do
+      [{pid, _}] -> GenServer.call(pid, :resume)
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @doc "Steps one tick while paused."
+  def step(instance_id) do
+    case Registry.lookup(Lunity.Instance.Registry, instance_id) do
+      [{pid, _}] -> GenServer.call(pid, :step)
+      [] -> {:error, :not_found}
     end
   end
 
@@ -68,14 +102,33 @@ defmodule Lunity.Instance do
   def init(opts) do
     id = Keyword.fetch!(opts, :id)
     scene_module = Keyword.fetch!(opts, :scene_module)
+    manager = Keyword.get(opts, :manager)
 
-    entity_ids = init_scene_entities(id, scene_module, opts)
+    store_id = id
+    {:ok, _pid} = ComponentStore.start_link(store_id, opts)
+
+    {components, systems, tick_rate} = resolve_manager_config(manager)
+    ComponentStore.with_store(store_id, fn ->
+      Enum.each(components, &ComponentStore.register/1)
+    end)
+
+    entity_ids =
+      ComponentStore.with_store(store_id, fn ->
+        init_scene_entities(scene_module)
+      end)
+
+    interval = div(1000, tick_rate)
+    Process.send_after(self(), :tick, interval)
 
     {:ok,
      %__MODULE__{
        id: id,
        scene_module: scene_module,
        entity_ids: entity_ids,
+       store_id: store_id,
+       systems: systems,
+       interval: interval,
+       last_tick: System.monotonic_time(:millisecond),
        status: :running
      }}
   end
@@ -86,11 +139,57 @@ defmodule Lunity.Instance do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    for entity_id <- state.entity_ids do
-      Lunity.ComponentStore.deallocate(entity_id)
-    end
+  def handle_call(:pause, _from, state) do
+    {:reply, :ok, %{state | status: :paused}}
+  end
 
+  @impl true
+  def handle_call(:resume, _from, state) do
+    {:reply, :ok, %{state | status: :running}}
+  end
+
+  @impl true
+  def handle_call(:step, _from, state) do
+    {:reply, :ok, Map.put(%{state | status: :paused}, :step_pending, true)}
+  end
+
+  @impl true
+  def handle_info(:tick, state) do
+    now = System.monotonic_time(:millisecond)
+    dt_ms = now - state.last_tick
+    dt_s = dt_ms / 1000.0
+
+    ComponentStore.with_store(state.store_id, fn ->
+      dt_tensor = ComponentStore.get_tensor(Lunity.Components.DeltaTime)
+
+      if dt_tensor do
+        ComponentStore.put_tensor(
+          Lunity.Components.DeltaTime,
+          Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
+        )
+      end
+
+      cond do
+        state.status == :running ->
+          TickRunner.tick(state.systems)
+
+        state.status == :paused and Map.get(state, :step_pending, false) ->
+          TickRunner.tick(state.systems)
+
+        true ->
+          :ok
+      end
+    end)
+
+    Process.send_after(self(), :tick, state.interval)
+    state = %{state | last_tick: now}
+    state = Map.delete(state, :step_pending)
+    {:noreply, state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    ComponentStore.stop(state.store_id)
     :ok
   end
 
@@ -112,12 +211,41 @@ defmodule Lunity.Instance do
     :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
   end
 
-  defp init_scene_entities(instance_id, scene_module, _opts) do
+  defp resolve_manager_config(nil) do
+    case find_manager_module() do
+      nil ->
+        {[], [], 20}
+
+      mod ->
+        components = [Lunity.Components.DeltaTime | mod.components()]
+        systems = mod.systems()
+        rate = if function_exported?(mod, :tick_rate, 0), do: mod.tick_rate(), else: 20
+        {components, systems, rate}
+    end
+  end
+
+  defp resolve_manager_config(manager_module) do
+    components = [Lunity.Components.DeltaTime | manager_module.components()]
+    systems = manager_module.systems()
+    rate = if function_exported?(manager_module, :tick_rate, 0), do: manager_module.tick_rate(), else: 20
+    {components, systems, rate}
+  end
+
+  defp find_manager_module do
+    :code.all_loaded()
+    |> Enum.find_value(fn {mod, _} ->
+      if is_atom(mod) && function_exported?(mod, :__lunity_manager__, 0) do
+        mod
+      end
+    end)
+  end
+
+  defp init_scene_entities(scene_module) do
     case Code.ensure_loaded(scene_module) do
       {:module, _} ->
         if function_exported?(scene_module, :__scene_def__, 0) do
           scene_def = scene_module.__scene_def__()
-          init_entities_from_def(instance_id, scene_def)
+          init_entities_from_def(scene_def)
         else
           []
         end
@@ -127,23 +255,17 @@ defmodule Lunity.Instance do
     end
   end
 
-  defp init_entities_from_def(instance_id, %Lunity.Scene.Def{nodes: nodes}) do
+  defp init_entities_from_def(%Lunity.Scene.Def{nodes: nodes}) do
     Enum.flat_map(nodes, fn node_def ->
-      init_entity_from_node(instance_id, node_def)
+      init_entity_from_node(node_def)
     end)
   end
 
-  defp init_entity_from_node(instance_id, %Lunity.Scene.NodeDef{} = node_def) do
+  defp init_entity_from_node(%Lunity.Scene.NodeDef{} = node_def) do
     entity_ids =
       if node_def.entity do
-        entity_id = {instance_id, node_def.name}
-        _index = Lunity.ComponentStore.allocate(entity_id)
-
-        Lunity.ComponentStore.put(
-          Lunity.Components.InstanceMembership,
-          entity_id,
-          instance_id
-        )
+        entity_id = node_def.name
+        _index = ComponentStore.allocate(entity_id)
 
         config = build_entity_config(node_def)
 
@@ -160,7 +282,7 @@ defmodule Lunity.Instance do
 
     child_ids =
       Enum.flat_map(node_def.children || [], fn child ->
-        init_entity_from_node(instance_id, child)
+        init_entity_from_node(child)
       end)
 
     entity_ids ++ child_ids

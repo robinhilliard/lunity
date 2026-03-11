@@ -83,6 +83,7 @@ defmodule Lunity.Web.ViewerSocket do
         state =
           Map.merge(state, %{
             watching: instance_id,
+            store_id: instance.store_id,
             entity_map: entity_map,
             ecs_timer: timer_ref
           })
@@ -93,7 +94,7 @@ defmodule Lunity.Web.ViewerSocket do
 
   defp handle_event(%{"type" => "unwatch"}, state) do
     state = stop_ecs_timer(state)
-    state = Map.drop(state, [:watching, :entity_map])
+    state = Map.drop(state, [:watching, :store_id, :entity_map])
     {:ok, state}
   end
 
@@ -241,8 +242,8 @@ defmodule Lunity.Web.ViewerSocket do
 
   def handle_info(:ecs_tick, state) do
     case state do
-      %{watching: _instance_id, entity_map: entity_map} ->
-        positions = read_positions(entity_map)
+      %{watching: _instance_id, store_id: store_id, entity_map: entity_map} ->
+        positions = read_positions(entity_map, store_id)
 
         msg = Jason.encode!(%{type: "ecs_update", positions: positions})
 
@@ -283,23 +284,25 @@ defmodule Lunity.Web.ViewerSocket do
     }
   end
 
-  defp build_entity_map(%{id: _instance_id, entity_ids: entity_ids}) do
-    Map.new(entity_ids, fn {_inst, name} = entity_id ->
-      {to_string(name), entity_id}
+  defp build_entity_map(%{entity_ids: entity_ids}) do
+    Map.new(entity_ids, fn name ->
+      {to_string(name), name}
     end)
   end
 
-  defp read_positions(entity_map) do
+  defp read_positions(entity_map, store_id) do
     pos_mod = Lunity.Components.Position
 
-    Map.new(entity_map, fn {name, entity_id} ->
-      case Lunity.ComponentStore.get(pos_mod, entity_id) do
-        {x, y, z} -> {name, [x, y, z]}
-        _ -> {name, nil}
-      end
+    Lunity.ComponentStore.with_store(store_id, fn ->
+      Map.new(entity_map, fn {name, entity_id} ->
+        case Lunity.ComponentStore.get(pos_mod, entity_id) do
+          {x, y, z} -> {name, [x, y, z]}
+          _ -> {name, nil}
+        end
+      end)
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+      |> Map.new()
     end)
-    |> Enum.reject(fn {_, v} -> is_nil(v) end)
-    |> Map.new()
   end
 
   defp stop_ecs_timer(state) do

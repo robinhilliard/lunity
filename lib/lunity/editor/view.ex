@@ -935,14 +935,6 @@ defmodule Lunity.Editor.View do
   end
 
   defp activate_instance_view(state, program, instance_id, scene_module) do
-    for {_node, entity_id} <- State.get_entities() do
-      try do
-        Lunity.ComponentStore.deallocate(entity_id)
-      rescue
-        _ -> :ok
-      end
-    end
-
     opts = [shader_program: program, skip_entities: true]
 
     case SceneLoader.load_scene(scene_module, opts) do
@@ -951,16 +943,19 @@ defmodule Lunity.Editor.View do
 
         entity_map =
           if instance do
-            for {^instance_id, name} <- instance.entity_ids, into: %{} do
-              {to_string(name), {instance_id, name}}
+            for name <- instance.entity_ids, into: %{} do
+              {to_string(name), name}
             end
           else
             %{}
           end
 
+        store_id = if instance, do: instance.store_id, else: nil
+
         State.set_scene(scene, inspect(scene_module), [], :scene)
         State.put_watching_instance(instance_id)
         State.put_instance_entity_map(entity_map)
+        State.put_instance_store_id(store_id)
         State.put_position_component(Lunity.Components.Position)
         State.update_window_title()
 
@@ -984,20 +979,23 @@ defmodule Lunity.Editor.View do
 
   defp sync_ecs_to_scene do
     with instance_id when not is_nil(instance_id) <- State.get_watching_instance(),
+         store_id when not is_nil(store_id) <- State.get_instance_store_id(),
          %{} = entity_map when map_size(entity_map) > 0 <- State.get_instance_entity_map(),
          pos_mod when not is_nil(pos_mod) <- State.get_position_component(),
          %Scene{} = scene <- State.get_scene() do
       position_map =
-        entity_map
-        |> Enum.reduce(%{}, fn {node_name, entity_id}, acc ->
-          try do
-            case Lunity.ComponentStore.get(pos_mod, entity_id) do
-              {_x, _y, _z} = pos -> Map.put(acc, node_name, pos)
+        Lunity.ComponentStore.with_store(store_id, fn ->
+          entity_map
+          |> Enum.reduce(%{}, fn {node_name, entity_id}, acc ->
+            try do
+              case Lunity.ComponentStore.get(pos_mod, entity_id) do
+                {_x, _y, _z} = pos -> Map.put(acc, node_name, pos)
+                _ -> acc
+              end
+            rescue
               _ -> acc
             end
-          rescue
-            _ -> acc
-          end
+          end)
         end)
 
       if map_size(position_map) > 0 do
