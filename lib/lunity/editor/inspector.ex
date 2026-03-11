@@ -29,7 +29,7 @@ defmodule Lunity.Editor.Inspector do
 
     grid = :wxGrid.new(panel, -1)
     :wxGrid.createGrid(grid, 0, 2)
-    :wxGrid.setColLabelValue(grid, 0, ~c"Component")
+    :wxGrid.setColLabelValue(grid, 0, ~c"Property")
     :wxGrid.setColLabelValue(grid, 1, ~c"Value")
     :wxGrid.setRowLabelSize(grid, 0)
     :wxGrid.setColSize(grid, 0, 120)
@@ -53,8 +53,11 @@ defmodule Lunity.Editor.Inspector do
       {:instance_entity, instance_id, entity_id} ->
         refresh_entity(grid, instance_id, entity_id)
 
-      {:scene_node, _name, _aabb} ->
-        show_message(grid, "(scene node selected)")
+      {:scene_node, name, _aabb} ->
+        refresh_scene_node(grid, name)
+
+      {:scene_node, name} ->
+        refresh_scene_node(grid, name)
 
       _ ->
         show_message(grid, "(no entity selected)")
@@ -62,6 +65,73 @@ defmodule Lunity.Editor.Inspector do
   catch
     :no_inspector -> :ok
   end
+
+  defp refresh_scene_node(grid, name) do
+    scene = State.get_scene()
+
+    node =
+      case scene && EAGL.Scene.find_node_with_transform(scene, name) do
+        {:ok, node, _world} -> node
+        _ -> nil
+      end
+
+    unless node do
+      show_message(grid, "(node not found)")
+      throw(:done)
+    end
+
+    rows =
+      [
+        node_prop("Name", node.name),
+        node_prop("Position", node.position),
+        node_prop("Rotation", node.rotation),
+        node_prop("Scale", node.scale),
+        light_rows(node.light),
+        camera_rows(node.camera),
+        properties_rows(node.properties)
+      ]
+      |> List.flatten()
+      |> Enum.reject(&is_nil/1)
+
+    populate_grid(grid, rows)
+  catch
+    :done -> :ok
+  end
+
+  defp node_prop(_label, nil), do: nil
+  defp node_prop(label, val), do: {label, format_value(val, %{})}
+
+  defp light_rows(nil), do: []
+
+  defp light_rows(light) when is_map(light) do
+    [
+      node_prop("Light Type", Map.get(light, :type)),
+      node_prop("Light Color", Map.get(light, :color)),
+      node_prop("Light Intensity", Map.get(light, :intensity)),
+      node_prop("Light Range", Map.get(light, :range))
+    ]
+  end
+
+  defp camera_rows(nil), do: []
+
+  defp camera_rows(camera) when is_map(camera) do
+    [
+      node_prop("Camera Type", Map.get(camera, :type)),
+      node_prop("Camera FOV", Map.get(camera, :yfov)),
+      node_prop("Camera Near", Map.get(camera, :znear)),
+      node_prop("Camera Far", Map.get(camera, :zfar))
+    ]
+  end
+
+  defp camera_rows(_), do: []
+
+  defp properties_rows(nil), do: []
+
+  defp properties_rows(props) when is_map(props) do
+    Enum.map(props, fn {k, v} -> node_prop(to_string(k), v) end)
+  end
+
+  defp properties_rows(_), do: []
 
   defp refresh_entity(grid, instance_id, entity_id) do
     instance = Lunity.Instance.get(instance_id)
@@ -106,10 +176,16 @@ defmodule Lunity.Editor.Inspector do
         |> Enum.sort_by(fn {name, _} -> name end)
       end)
 
+    populate_grid(grid, rows)
+  catch
+    :done -> :ok
+  end
+
+  defp populate_grid(grid, rows) do
     clear_grid(grid)
 
     if rows == [] do
-      show_message(grid, "(no components)")
+      show_message(grid, "(empty)")
     else
       :wxGrid.appendRows(grid, numRows: length(rows))
 
@@ -120,8 +196,6 @@ defmodule Lunity.Editor.Inspector do
 
       :wxGrid.autoSizeColumns(grid)
     end
-  catch
-    :done -> :ok
   end
 
   defp format_value(val, _opts) when is_tuple(val) do
@@ -131,7 +205,17 @@ defmodule Lunity.Editor.Inspector do
     |> Enum.join(", ")
   end
 
+  defp format_value(val, _opts) when is_list(val) do
+    if Enum.all?(val, &is_number/1) do
+      val |> Enum.map(&format_number/1) |> Enum.join(", ")
+    else
+      inspect(val, limit: 50)
+    end
+  end
+
   defp format_value(val, _opts) when is_number(val), do: format_number(val)
+  defp format_value(val, _opts) when is_atom(val), do: to_string(val)
+  defp format_value(val, _opts) when is_binary(val), do: val
   defp format_value(val, _opts), do: inspect(val, limit: 50)
 
   defp format_number(n) when is_float(n), do: :erlang.float_to_binary(n, decimals: 3)
