@@ -39,10 +39,6 @@ defmodule Lunity.Editor.HierarchyTree do
     native_fg = :wxTreeCtrl.getForegroundColour(tree)
     State.put_tree_native_colours(native_bg, native_fg)
 
-    t = theme()
-    :wxWindow.setBackgroundColour(tree, t.window_bg)
-    :wxWindow.setForegroundColour(tree, t.window_fg)
-
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
     scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Source: (no scene)")
     instances_root = :wxTreeCtrl.appendItem(tree, root, ~c"Game Instances")
@@ -59,6 +55,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
     tree
   end
+
 
   @doc """
   Rebuild the Scene section from an EAGL scene's root nodes.
@@ -108,14 +105,14 @@ defmodule Lunity.Editor.HierarchyTree do
     else
       suffix = node_type_suffix(node)
       label = if suffix, do: "#{name}  #{suffix}", else: "#{name}"
+      children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
+
       item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
       set_item_default_style(tree, item)
-
       :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
       name_map = State.get_tree_name_map()
       State.put_tree_name_map(Map.put(name_map, name, item))
 
-      children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
       Enum.each(children, fn child -> add_scene_node(tree, item, child) end)
 
       if children != [], do: :wxTreeCtrl.expand(tree, item)

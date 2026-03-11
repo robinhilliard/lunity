@@ -408,6 +408,7 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
+
   # F5 = toggle play/pause, F6 = step, Escape = stop watching
   def handle_event({:key, 344}, state) do
     handle_transport(:play_pause)
