@@ -853,6 +853,7 @@ defmodule Lunity.MCP.Server do
   defp do_handle_tool_call("pause", args, state) do
     targets = resolve_instance_targets(args)
     Enum.each(targets, &Lunity.Instance.pause/1)
+    sync_editor_mode_from_watched(targets)
     content = "Paused instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
@@ -867,6 +868,7 @@ defmodule Lunity.MCP.Server do
   defp do_handle_tool_call("resume", args, state) do
     targets = resolve_instance_targets(args)
     Enum.each(targets, &Lunity.Instance.resume/1)
+    sync_editor_mode_from_watched(targets)
     content = "Resumed instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
   end
@@ -875,6 +877,22 @@ defmodule Lunity.MCP.Server do
     case args && Map.get(args, "instance_id") do
       nil -> Lunity.Instance.list()
       id -> [id]
+    end
+  end
+
+  defp sync_editor_mode_from_watched(targets) do
+    case State.get_watching_instance() do
+      nil ->
+        :ok
+
+      watched_id ->
+        if watched_id in targets do
+          case Lunity.Instance.get(watched_id) do
+            %{status: :paused} -> State.put_editor_mode(:paused)
+            %{status: :running} -> State.put_editor_mode(:watch)
+            _ -> :ok
+          end
+        end
     end
   end
 

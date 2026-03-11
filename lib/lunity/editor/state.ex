@@ -31,11 +31,30 @@ defmodule Lunity.Editor.State do
     case :ets.whereis(@table) do
       :undefined ->
         :ets.new(@table, [:named_table, :public, :set])
+        :ets.insert(@table, {:editor_mode, :edit})
         :ok
 
       _ ->
         :ok
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Editor mode (:edit | :watch | :paused)
+  # ---------------------------------------------------------------------------
+
+  @doc "Get the current editor mode."
+  def get_editor_mode do
+    case :ets.lookup(@table, :editor_mode) do
+      [{:editor_mode, mode}] -> mode
+      [] -> :edit
+    end
+  end
+
+  @doc "Set the editor mode."
+  def put_editor_mode(mode) when mode in [:edit, :watch, :paused] do
+    :ets.insert(@table, {:editor_mode, mode})
+    :ok
   end
 
   @doc "Get the current scene."
@@ -577,13 +596,15 @@ defmodule Lunity.Editor.State do
     end
   end
 
-  @doc "Update the window title to reflect the current context."
+  @doc "Update the window title to reflect the current context and mode."
   def update_window_title do
     case get_frame() do
       nil ->
         :ok
 
       frame ->
+        mode = get_editor_mode()
+
         suffix =
           case get_watching_instance() do
             nil ->
@@ -594,7 +615,13 @@ defmodule Lunity.Editor.State do
               end
 
             instance_id ->
-              "Instance: #{instance_id}"
+              mode_label = case mode do
+                :watch -> "RUNNING"
+                :paused -> "PAUSED"
+                _ -> ""
+              end
+
+              "Instance: #{instance_id} [#{mode_label}]"
           end
 
         title = if suffix, do: "Lunity Editor — #{suffix}", else: "Lunity Editor"
@@ -610,6 +637,7 @@ defmodule Lunity.Editor.State do
   @doc "Set the instance ID currently being watched in the quad view."
   def put_watching_instance(instance_id) do
     :ets.insert(@table, {:watching_instance, instance_id})
+    put_editor_mode(:watch)
     :ok
   end
 
@@ -627,6 +655,7 @@ defmodule Lunity.Editor.State do
     :ets.delete(@table, :instance_entity_map)
     :ets.delete(@table, :instance_store_id)
     :ets.delete(@table, :position_component)
+    put_editor_mode(:edit)
     :ok
   end
 

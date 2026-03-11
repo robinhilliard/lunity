@@ -94,11 +94,17 @@ defmodule Lunity.Editor.View do
     state = maybe_refresh_tree(state)
     state = maybe_refresh_instances(state)
     state = process_watch_command(state)
-    sync_ecs_to_scene()
+    editor_mode = State.get_editor_mode()
+    if editor_mode in [:watch, :paused], do: sync_ecs_to_scene()
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
-    state = process_pick_request(state, w, h)
-    update_hover(state)
+
+    state =
+      if editor_mode in [:edit, :paused],
+        do: process_pick_request(state, w, h),
+        else: state
+
+    if editor_mode in [:edit, :paused], do: update_hover(state)
 
     :gl.clearColor(0.1, 0.1, 0.12, 1.0)
     :gl.clear(@gl_color_buffer_bit ||| @gl_depth_buffer_bit)
