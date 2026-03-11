@@ -50,10 +50,13 @@ defmodule Lunity.System do
         quote do: import(Nx.Defn)
       end
 
+    entities = Keyword.get(opts, :entities, [])
+
     quote do
       @behaviour Lunity.System
       @before_compile Lunity.System
       @lunity_system_type unquote(type)
+      @lunity_system_entities unquote(entities)
       unquote(import_defn)
     end
   end
@@ -107,6 +110,7 @@ defmodule Lunity.System do
 
     read_modules = Enum.map(reads, fn {_key, mod} -> mod end)
     write_modules = Enum.map(writes, fn {_key, mod} -> mod end)
+    entities = Module.get_attribute(env.module, :lunity_system_entities) || []
 
     quote do
       @impl Lunity.System
@@ -114,7 +118,8 @@ defmodule Lunity.System do
         %{
           type: unquote(type),
           reads: unquote(read_modules),
-          writes: unquote(write_modules)
+          writes: unquote(write_modules),
+          entities: unquote(entities)
         }
       end
     end

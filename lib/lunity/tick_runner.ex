@@ -35,6 +35,9 @@ defmodule Lunity.TickRunner do
         {key, ComponentStore.get_tensor(component)}
       end)
 
+    entity_names = Map.get(opts, :entities, [])
+    inputs = resolve_entity_indices(inputs, entity_names)
+
     outputs = system_module.run(inputs)
 
     for component <- opts.writes do
@@ -47,6 +50,19 @@ defmodule Lunity.TickRunner do
     end
 
     :ok
+  end
+
+  defp resolve_entity_indices(inputs, []), do: inputs
+
+  defp resolve_entity_indices(inputs, entity_names) do
+    indices =
+      Map.new(entity_names, fn name ->
+        key = :"#{name}_idx"
+        idx = ComponentStore.index_of(name) || -1
+        {key, Nx.tensor(idx, type: :s32)}
+      end)
+
+    Map.merge(inputs, indices)
   end
 
   defp run_structured_system(system_module, opts) do
