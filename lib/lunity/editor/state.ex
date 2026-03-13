@@ -113,6 +113,22 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Format scene path for display. Strips 'Elixir.' prefix from module names."
+  def format_scene_path_for_display(nil), do: nil
+
+  def format_scene_path_for_display(path) when is_binary(path), do: path
+
+  def format_scene_path_for_display(path) when is_atom(path) do
+    path
+    |> Module.split()
+    |> then(fn parts ->
+      if parts != [] and hd(parts) == "Elixir", do: tl(parts), else: parts
+    end)
+    |> Enum.join(".")
+  end
+
+  def format_scene_path_for_display(path), do: inspect(path)
+
   @doc "Set project context from set_project tool. Used by SceneLoader to find modules."
   def put_project_context(cwd, app) when is_binary(cwd) do
     case :ets.whereis(@table) do
@@ -485,8 +501,8 @@ defmodule Lunity.Editor.State do
   # ---------------------------------------------------------------------------
 
   @doc "Store tree widget references."
-  def put_tree(tree, root, scene_root, project_root, instances_root) do
-    :ets.insert(@table, {:tree, {tree, root, scene_root, project_root, instances_root}})
+  def put_tree(tree, root, instances_root, scenes_root) do
+    :ets.insert(@table, {:tree, {tree, root, instances_root, scenes_root}})
     :ok
   end
 
@@ -515,7 +531,25 @@ defmodule Lunity.Editor.State do
   @doc "Store the currently selected item in the hierarchy tree."
   def put_selection(selection) do
     :ets.insert(@table, {:tree_selection, selection})
+    :ets.insert(@table, {:inspector_dirty, true})
     :ok
+  end
+
+  @doc "Mark the inspector as needing a refresh."
+  def mark_inspector_dirty do
+    :ets.insert(@table, {:inspector_dirty, true})
+    :ok
+  end
+
+  @doc "Check and clear the inspector dirty flag."
+  def take_inspector_dirty do
+    case :ets.lookup(@table, :inspector_dirty) do
+      [{:inspector_dirty, true}] ->
+        :ets.delete(@table, :inspector_dirty)
+        true
+      _ ->
+        false
+    end
   end
 
   @doc "Get the current tree selection, or nil."
@@ -582,6 +616,20 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Store the loaded scene tree item (under Scenes), or nil."
+  def put_loaded_scene_item(item) do
+    :ets.insert(@table, {:loaded_scene_item, item})
+    :ok
+  end
+
+  @doc "Get the loaded scene tree item, or nil."
+  def get_loaded_scene_item do
+    case :ets.lookup(@table, :loaded_scene_item) do
+      [{:loaded_scene_item, item}] -> item
+      [] -> nil
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Scene helpers
   # ---------------------------------------------------------------------------
@@ -602,6 +650,20 @@ defmodule Lunity.Editor.State do
     :ok
   end
 
+  @doc "Store the transport toolbar for play/pause icon updates."
+  def put_toolbar(toolbar) do
+    :ets.insert(@table, {:toolbar, toolbar})
+    :ok
+  end
+
+  @doc "Get the transport toolbar, or nil."
+  def get_toolbar do
+    case :ets.lookup(@table, :toolbar) do
+      [{:toolbar, toolbar}] -> toolbar
+      [] -> nil
+    end
+  end
+
   @doc "Get the wxFrame reference, or nil."
   def get_frame do
     case :ets.lookup(@table, :frame) do
@@ -619,13 +681,13 @@ defmodule Lunity.Editor.State do
       frame ->
         mode = get_editor_mode()
 
-        suffix =
+        context =
           case get_watching_instance() do
             nil ->
               case {get_context_type(), get_scene_path()} do
                 {_, nil} -> nil
-                {:prefab, path} -> "Prefab: #{path}"
-                {:scene, path} -> "Scene: #{path}"
+                {:prefab, path} -> "Prefab: #{format_scene_path_for_display(path)}"
+                {:scene, path} -> format_scene_path_for_display(path)
               end
 
             instance_id ->
@@ -635,10 +697,23 @@ defmodule Lunity.Editor.State do
                 _ -> ""
               end
 
-              "Instance: #{instance_id} [#{mode_label}]"
+              "#{instance_id} #{mode_label}"
           end
 
-        title = if suffix, do: "Lunity Editor — #{suffix}", else: "Lunity Editor"
+        selection =
+          case get_selection() do
+            {:scene_node, name, _} when is_binary(name) -> name
+            {:scene_node, name} when is_binary(name) -> name
+            {:scene_root} -> nil
+            {:instance_entity, _iid, eid} when is_atom(eid) -> Atom.to_string(eid)
+            {:instance_entity, _iid, eid} -> inspect(eid)
+            {:game_instance, iid, _mod} -> iid
+            {:project, :scene, mod} -> format_scene_path_for_display(mod)
+            _ -> nil
+          end
+
+        parts = [context, selection] |> Enum.reject(&is_nil/1) |> Enum.join(" — ")
+        title = if parts == "", do: "Lunity", else: "Lunity — #{parts}"
         :wxFrame.setTitle(frame, String.to_charlist(title))
         :ok
     end
@@ -650,8 +725,17 @@ defmodule Lunity.Editor.State do
 
   @doc "Set the instance ID currently being watched in the quad view."
   def put_watching_instance(instance_id) do
+    was = get_watching_instance()
     :ets.insert(@table, {:watching_instance, instance_id})
-    put_editor_mode(:watch)
+    if was != instance_id do
+      # Switching to a different instance (or back from scene view). Use the
+      # instance's actual status so we don't show RUNNING when it's paused.
+      mode = case Lunity.Instance.get(instance_id) do
+        %{status: :paused} -> :paused
+        _ -> :watch
+      end
+      put_editor_mode(mode)
+    end
     :ok
   end
 
@@ -771,6 +855,56 @@ defmodule Lunity.Editor.State do
     end
   end
 
+  @doc "Store the inspector panel (for size event handling)."
+  def put_inspector_panel(panel) do
+    :ets.insert(@table, {:inspector_panel, panel})
+    :ok
+  end
+
+  @doc "Get the inspector panel, or nil."
+  def get_inspector_panel do
+    case :ets.lookup(@table, :inspector_panel) do
+      [{:inspector_panel, panel}] -> panel
+      [] -> nil
+    end
+  end
+
+  @doc "Store the splitter window (for deferred sash positioning)."
+  def put_splitter(splitter) do
+    :ets.insert(@table, {:splitter, splitter})
+    :ok
+  end
+
+  @doc "Get the splitter window, or nil."
+  def get_splitter do
+    case :ets.lookup(@table, :splitter) do
+      [{:splitter, splitter}] -> splitter
+      [] -> nil
+    end
+  end
+
+  @doc "Store the inspector panel width (pixels) to preserve on window resize."
+  def put_inspector_width(width) when is_integer(width) and width >= 100 do
+    :ets.insert(@table, {:inspector_width, width})
+    :ok
+  end
+
+  def put_inspector_width(_), do: :ok
+
+  @doc "Get the stored inspector width, or nil if not set."
+  def get_inspector_width do
+    case :ets.lookup(@table, :inspector_width) do
+      [{:inspector_width, w}] -> w
+      [] -> nil
+    end
+  end
+
+  @doc "Clear the splitter (after initial sash has been set)."
+  def clear_splitter do
+    :ets.delete(@table, :splitter)
+    :ok
+  end
+
   # ---------------------------------------------------------------------------
   # Theme
   # ---------------------------------------------------------------------------
@@ -797,7 +931,8 @@ defmodule Lunity.Editor.State do
           hover_bg: {200, 220, 240},
           hover_fg: {0, 0, 0},
           panel_bg: {245, 245, 245},
-          separator: {220, 220, 220}
+          separator: {220, 220, 220},
+          tree_bg: {255, 255, 255}
         }
     end
   end

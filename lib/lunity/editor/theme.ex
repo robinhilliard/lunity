@@ -11,9 +11,9 @@ defmodule Lunity.Editor.Theme do
 
   ## Hover colour
 
-  Blends the system highlight colour toward the window background at 30%
-  opacity, giving a subtler version of the selection highlight that works
-  in both light and dark themes.
+  Blends the system highlight colour toward the tree background at 30%
+  opacity, giving a transparent-overlay effect. Pre-blended because native
+  tree controls don't support alpha.
   """
 
   # wxSYS_COLOUR constants
@@ -31,7 +31,8 @@ defmodule Lunity.Editor.Theme do
           hover_bg: {integer(), integer(), integer()},
           hover_fg: {integer(), integer(), integer()},
           panel_bg: {integer(), integer(), integer()},
-          separator: {integer(), integer(), integer()}
+          separator: {integer(), integer(), integer()},
+          tree_bg: {integer(), integer(), integer()}
         }
 
   @doc "Read system theme colours. Call after `:wx.new()`."
@@ -44,7 +45,14 @@ defmodule Lunity.Editor.Theme do
 
     dark? = luminance(window_bg) < 128
 
-    hover_bg = blend(select_bg, window_bg, 0.25)
+    # In dark mode, tree_bg is lightened so black disclosure triangles stand out.
+    tree_bg =
+      if dark?,
+        do: shift(window_bg, 20),
+        else: window_bg
+
+    # Hover: transparent highlight over tree background (pre-blended; native tree has no alpha)
+    hover_bg = blend(select_bg, tree_bg, 0.5)
     hover_fg = window_fg
 
     panel_bg =
@@ -66,7 +74,8 @@ defmodule Lunity.Editor.Theme do
       hover_bg: hover_bg,
       hover_fg: hover_fg,
       panel_bg: panel_bg,
-      separator: separator
+      separator: separator,
+      tree_bg: tree_bg
     }
   end
 

@@ -872,6 +872,37 @@ defmodule Lunity.MCP.Server do
     {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
+  defp do_handle_tool_call(
+         "entity_set",
+         %{"entity_id" => eid, "component" => comp, "value" => val},
+         state
+       )
+       when is_integer(eid) and is_binary(comp) and is_map(val) do
+    case resolve_component_module(comp) do
+      {:ok, mod} ->
+        try do
+          existing = mod.get(eid, nil)
+          merged = merge_component_value(existing, val)
+          mod.update(eid, merged)
+          content = "Updated. New value: #{component_to_json(merged)}"
+          {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
+        rescue
+          e ->
+            content = "entity_set failed: #{inspect(e)}"
+            {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+        end
+
+      {:error, reason} ->
+        content = "Component module not found: #{inspect(reason)}"
+        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+    end
+  end
+
+  defp do_handle_tool_call("entity_set", _args, state) do
+    content = "entity_set requires entity_id, component, and value (map)."
+    {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
+  end
+
   defp do_handle_tool_call("entity_at_screen", %{"x" => x, "y" => y}, state)
        when is_number(x) and is_number(y) do
     State.put_pick_request(x, y)
@@ -975,60 +1006,6 @@ defmodule Lunity.MCP.Server do
     sync_editor_mode_from_watched(targets)
     content = "Resumed instances: #{inspect(targets)}"
     {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
-  end
-
-  defp resolve_instance_targets(args) do
-    case args && Map.get(args, "instance_id") do
-      nil -> Lunity.Instance.list()
-      id -> [id]
-    end
-  end
-
-  defp sync_editor_mode_from_watched(targets) do
-    case State.get_watching_instance() do
-      nil ->
-        :ok
-
-      watched_id ->
-        if watched_id in targets do
-          case Lunity.Instance.get(watched_id) do
-            %{status: :paused} -> State.put_editor_mode(:paused)
-            %{status: :running} -> State.put_editor_mode(:watch)
-            _ -> :ok
-          end
-        end
-    end
-  end
-
-  defp do_handle_tool_call(
-         "entity_set",
-         %{"entity_id" => eid, "component" => comp, "value" => val},
-         state
-       )
-       when is_integer(eid) and is_binary(comp) and is_map(val) do
-    case resolve_component_module(comp) do
-      {:ok, mod} ->
-        try do
-          existing = mod.get(eid, nil)
-          merged = merge_component_value(existing, val)
-          mod.update(eid, merged)
-          content = "Updated. New value: #{component_to_json(merged)}"
-          {:ok, %{content: [%{type: "text", text: content}], is_error?: false}, state}
-        rescue
-          e ->
-            content = "entity_set failed: #{inspect(e)}"
-            {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
-        end
-
-      {:error, reason} ->
-        content = "Component module not found: #{inspect(reason)}"
-        {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
-    end
-  end
-
-  defp do_handle_tool_call("entity_set", _args, state) do
-    content = "entity_set requires entity_id, component, and value (map)."
-    {:ok, %{content: [%{type: "text", text: content}], is_error?: true}, state}
   end
 
   defp do_handle_tool_call("ecs_dump", args, state) do
@@ -1324,6 +1301,29 @@ defmodule Lunity.MCP.Server do
 
   defp do_handle_tool_call(_tool_name, _args, state) do
     {:error, :tool_not_implemented, state}
+  end
+
+  defp resolve_instance_targets(args) do
+    case args && Map.get(args, "instance_id") do
+      nil -> Lunity.Instance.list()
+      id -> [id]
+    end
+  end
+
+  defp sync_editor_mode_from_watched(targets) do
+    case State.get_watching_instance() do
+      nil ->
+        :ok
+
+      watched_id ->
+        if watched_id in targets do
+          case Lunity.Instance.get(watched_id) do
+            %{status: :paused} -> State.put_editor_mode(:paused)
+            %{status: :running} -> State.put_editor_mode(:watch)
+            _ -> :ok
+          end
+        end
+    end
   end
 
   defp resolve_single_instance(args) do

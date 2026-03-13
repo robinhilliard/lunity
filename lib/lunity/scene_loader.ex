@@ -53,8 +53,6 @@ defmodule Lunity.SceneLoader do
   """
   @spec load_scene(module() | String.t(), keyword()) ::
           {:ok, Scene.t(), [{Node.t(), term()}]} | {:error, term()}
-  def load_scene(path_or_module, opts \\ [])
-
   def load_scene(module, opts) when is_atom(module) do
     if cwd = opts[:project_cwd] do
       Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
@@ -69,13 +67,13 @@ defmodule Lunity.SceneLoader do
     end
   end
 
-  def load_scene(path, opts) when is_binary(path) do
+  def load_scene(path_or_module, opts) when is_binary(path_or_module) do
     if cwd = opts[:project_cwd] do
       Lunity.Editor.State.put_project_context(cwd, opts[:project_app])
     end
 
-    with :ok <- validate_path(path) do
-      case resolve_scene_builder(path, opts) do
+    with :ok <- validate_path(path_or_module) do
+      case resolve_scene_builder(path_or_module, opts) do
         {:ok, scene} ->
           {:ok, scene, []}
 
@@ -83,25 +81,51 @@ defmodule Lunity.SceneLoader do
           err
 
         nil ->
-          case resolve_mod_scene(path, opts) do
+          case resolve_mod_scene(path_or_module, opts) do
             {:ok, _scene, _entities} = result ->
               result
 
             nil ->
-              case resolve_scene_module_by_path(path, opts) do
+              case resolve_scene_module_by_path(path_or_module, opts) do
                 {:ok, _scene, _entities} = result ->
                   result
 
                 nil ->
-                  case resolve_config_scene(path, opts) do
+                  case resolve_config_scene(path_or_module, opts) do
                     {:ok, _scene, _entities} = result ->
                       result
 
                     nil ->
-                      load_scene_from_file(path, opts)
+                      load_scene_from_file(path_or_module, opts)
                   end
               end
           end
+      end
+    end
+  end
+
+  @doc """
+  Resolve a path to a scene module for display. Uses the convention
+  `{App}.Scenes.{CamelizedPath}`. Returns the module if found, else nil.
+  """
+  def resolve_path_to_display_module(path, opts \\ []) when is_binary(path) do
+    scene_key = path |> String.replace_suffix(".glb", "") |> String.trim_leading("scenes/")
+    app = opts[:app] || Lunity.project_app()
+
+    if app do
+      app_prefix = app |> to_string() |> Macro.camelize()
+
+      module_parts =
+        scene_key
+        |> String.split("/")
+        |> Enum.map(&Macro.camelize/1)
+        |> Enum.map(&String.to_atom/1)
+
+      module = Module.concat([String.to_atom(app_prefix), :Scenes] ++ module_parts)
+
+      case resolve_scene_module(module) do
+        {:ok, _} -> module
+        _ -> nil
       end
     end
   end
@@ -285,6 +309,7 @@ defmodule Lunity.SceneLoader do
                 |> maybe_apply_material(node_def)
                 |> maybe_apply_light(node_def)
                 |> maybe_store_glb_id(node_def)
+                |> maybe_store_prefab_entity(node_def)
 
               {child, entity_entities} =
                 if node_def.entity && not Keyword.get(opts, :skip_entities, false) do
@@ -314,6 +339,7 @@ defmodule Lunity.SceneLoader do
             |> apply_transform(node_def)
             |> maybe_apply_material(node_def)
             |> maybe_apply_light(node_def)
+            |> maybe_store_prefab_entity(node_def)
 
           {child, entity_entities} =
             if node_def.entity && not Keyword.get(opts, :skip_entities, false) do
@@ -660,6 +686,15 @@ defmodule Lunity.SceneLoader do
 
   defp load_node_config(config_path, _properties) do
     ConfigLoader.load_config(config_path)
+  end
+
+  defp maybe_store_prefab_entity(node, %NodeDef{prefab: nil, entity: nil}), do: node
+
+  defp maybe_store_prefab_entity(node, %NodeDef{prefab: prefab, entity: entity}) do
+    props = node.properties || %{}
+    props = if prefab, do: Map.put(props, "prefab", prefab), else: props
+    props = if entity, do: Map.put(props, "entity", entity), else: props
+    %{node | properties: props}
   end
 
   defp maybe_store_glb_id(node, %NodeDef{prefab: nil}), do: node

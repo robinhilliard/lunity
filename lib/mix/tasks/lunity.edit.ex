@@ -49,6 +49,10 @@ defmodule Mix.Tasks.Lunity.Edit do
 
   @impl Mix.Task
   def run(args) do
+    if :os.type() == {:unix, :darwin} do
+      :os.cmd(~c"defaults write beam.smp NSRequiresAquaSystemAppearance -bool true")
+    end
+
     use_http = System.get_env("LUNITY_HTTP") != "0" and "--stdio" not in args
 
     project_dir = project_dir_from_args(args)

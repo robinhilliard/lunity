@@ -29,10 +29,10 @@ defmodule Lunity.Editor.View do
   @split_min 0.15
   @split_max 0.85
 
-  @tool_play 1001
-  @tool_pause 1002
+  @tool_play_pause 1001
   @tool_step 1003
   @tool_stop 1004
+
 
   def run(opts \\ []) do
     default_opts = [
@@ -48,43 +48,80 @@ defmodule Lunity.Editor.View do
     )
   end
 
+  @inspector_default_width 263
+
   @impl true
   def setup_layout(frame, gl_canvas) do
     theme = Lunity.Editor.Theme.detect()
     State.put_theme(theme)
 
-    create_transport_toolbar(frame)
+    splitter = :wxSplitterWindow.new(frame, [style: @wx_sp_live_update])
+    :wxSplitterWindow.setMinimumPaneSize(splitter, 100)
+
+    t = State.get_theme()
+    left_panel = :wxPanel.new(splitter)
+    :wxWindow.setBackgroundColour(left_panel, t.panel_bg)
+
+    tree_transport_panel = :wxPanel.new(left_panel)
+    :wxWindow.setBackgroundColour(tree_transport_panel, t.panel_bg)
+    :wxWindow.setMinSize(tree_transport_panel, {220, -1})
+
+    transport = create_transport_buttons(tree_transport_panel)
+    tree = HierarchyTree.create(tree_transport_panel)
+    :wxWindow.reparent(gl_canvas, left_panel)
+
+    tree_transport_sizer = :wxBoxSizer.new(@wx_vertical)
+    :wxSizer.add(tree_transport_sizer, transport.panel, proportion: 0, flag: 0, border: 4)
+    :wxSizer.add(tree_transport_sizer, tree, proportion: 1, flag: @wx_expand)
+    :wxPanel.setSizer(tree_transport_panel, tree_transport_sizer)
+
+    left_sizer = :wxBoxSizer.new(@wx_horizontal)
+    :wxSizer.add(left_sizer, tree_transport_panel, proportion: 0, flag: @wx_expand)
+    :wxSizer.add(left_sizer, gl_canvas, proportion: 1, flag: @wx_expand)
+    :wxPanel.setSizer(left_panel, left_sizer)
+
+    :wxFrame.connect(frame, :command_menu_selected)
+    :wxFrame.connect(frame, :command_button_clicked)
+
+    inspector = Inspector.create(splitter)
+    {w, _} = :wxWindow.getClientSize(frame)
+    sash_pos = if w > 0, do: max(100, w - @inspector_default_width), else: 761
+    :wxSplitterWindow.splitVertically(splitter, left_panel, inspector, sashPosition: sash_pos)
+
+    State.put_inspector_width(@inspector_default_width)
+    :wxSplitterWindow.connect(splitter, :command_splitter_sash_pos_changing)
+    :wxSplitterWindow.connect(splitter, :command_splitter_sash_pos_changed)
 
     sizer = :wxBoxSizer.new(@wx_horizontal)
-    tree = HierarchyTree.create(frame)
-    inspector = Inspector.create(frame)
-    :wxSizer.add(sizer, tree, proportion: 0, flag: @wx_expand)
-    :wxSizer.add(sizer, gl_canvas, proportion: 1, flag: @wx_expand)
-    :wxSizer.add(sizer, inspector, proportion: 0, flag: @wx_expand)
+    :wxSizer.add(sizer, splitter, proportion: 1, flag: @wx_expand)
 
     State.put_frame(frame)
+    State.put_splitter(splitter)
 
     sizer
   end
 
-  defp create_transport_toolbar(frame) do
-    toolbar = :wxFrame.createToolBar(frame)
+  defp create_transport_buttons(parent) do
+    theme = State.get_theme()
+    panel_bg = if theme.dark?, do: theme.tree_bg, else: {255, 255, 255}
 
-    play_bmp = :wxArtProvider.getBitmap(~c"wxART_GO_FORWARD")
-    pause_bmp = :wxArtProvider.getBitmap(~c"wxART_CROSS_MARK")
-    step_bmp = :wxArtProvider.getBitmap(~c"wxART_GO_DOWN")
-    stop_bmp = :wxArtProvider.getBitmap(~c"wxART_DELETE")
+    panel = :wxPanel.new(parent)
+    :wxWindow.setBackgroundColour(panel, panel_bg)
 
-    :wxToolBar.addTool(toolbar, @tool_play, ~c"Play (F5)", play_bmp)
-    :wxToolBar.addTool(toolbar, @tool_pause, ~c"Pause (F5)", pause_bmp)
-    :wxToolBar.addTool(toolbar, @tool_step, ~c"Step (F6)", step_bmp)
-    :wxToolBar.addSeparator(toolbar)
-    :wxToolBar.addTool(toolbar, @tool_stop, ~c"Stop (Esc)", stop_bmp)
-    :wxToolBar.realize(toolbar)
+    play_btn = :wxButton.new(panel, @tool_play_pause, [{:label, ~c"▶"}])
+    step_btn = :wxButton.new(panel, @tool_step, [{:label, ~c"▶|"}])
+    stop_btn = :wxButton.new(panel, @tool_stop, [{:label, ~c"■"}])
 
-    :wxToolBar.connect(toolbar, :command_menu_selected)
+    sizer = :wxBoxSizer.new(@wx_horizontal)
+    :wxSizer.add(sizer, play_btn, flag: 0)
+    :wxSizer.add(sizer, step_btn, flag: 0)
+    :wxSizer.add(sizer, stop_btn, flag: 0)
+    :wxPanel.setSizer(panel, sizer)
 
-    toolbar
+    transport = %{panel: panel, play_pause: play_btn}
+    State.put_toolbar(transport)
+
+    transport
   end
 
   @impl true
@@ -128,7 +165,12 @@ defmodule Lunity.Editor.View do
     state = process_watch_command(state)
     editor_mode = State.get_editor_mode()
     if editor_mode in [:watch, :paused], do: sync_ecs_to_scene()
-    if rem(state.frame, 10) == 0, do: Inspector.refresh()
+    inspector_dirty = State.take_inspector_dirty()
+    live_watch = editor_mode == :watch and State.get_watching_instance() != nil
+    if inspector_dirty or (live_watch and rem(state.frame, 10) == 0) do
+      Inspector.refresh()
+    end
+    state = maybe_refresh_transport_play_pause(state)
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
 
@@ -361,24 +403,24 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
-  def handle_event({:mouse_down, x, y}, state) do
+  def handle_event({:mouse_down, x, y, _obj}, state) do
     state = %{state | click_origin: {x, y}}
     state = handle_press(state, :left, x, y)
     {:ok, state}
   end
 
-  def handle_event({:mouse_up, x, y}, state) do
+  def handle_event({:mouse_up, x, y, _obj}, state) do
     state = maybe_pick_at(state, x, y)
     state = handle_release(state, :left)
     {:ok, state}
   end
 
-  def handle_event({:middle_down, x, y}, state) do
+  def handle_event({:middle_down, x, y, _obj}, state) do
     state = handle_press(state, :middle, x, y)
     {:ok, state}
   end
 
-  def handle_event({:middle_up, _x, _y}, state) do
+  def handle_event({:middle_up, _x, _y, _obj}, state) do
     state = handle_release(state, :middle)
     {:ok, state}
   end
@@ -392,61 +434,97 @@ defmodule Lunity.Editor.View do
 
   def handle_event({:wx_event, {:wxTree, :command_tree_sel_changed, item, _, _}}, state) do
     case State.get_tree() do
-      {tree, _, _, _, _} -> HierarchyTree.handle_selection(tree, item)
+      {tree, _, _, _} -> HierarchyTree.handle_selection(tree, item)
       _ -> nil
     end
 
+    State.update_window_title()
     {:ok, state}
   end
 
   def handle_event({:wx_event, {:wxTree, :command_tree_item_activated, item, _, _}}, state) do
     case State.get_tree() do
-      {tree, _, _, _, _} -> HierarchyTree.handle_activation(tree, item)
+      {tree, _, _, _} -> HierarchyTree.handle_activation(tree, item)
       _ -> nil
     end
 
     {:ok, state}
   end
 
-
   # F5 = toggle play/pause, F6 = step, Escape = stop watching
   def handle_event({:key, 344}, state) do
     handle_transport(:play_pause)
+    refresh_transport_play_pause()
     {:ok, state}
   end
 
   def handle_event({:key, 345}, state) do
     handle_transport(:step)
+    refresh_transport_play_pause()
     {:ok, state}
   end
 
   def handle_event({:key, 27}, state) do
     handle_transport(:stop)
+    refresh_transport_play_pause()
     {:ok, state}
   end
 
-  # Toolbar button clicks
-  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_play, _, _}}, state) do
-    handle_transport(:play)
+  # Transport button clicks (command_button_clicked) and menu items (command_menu_selected)
+  def handle_event({:wx_event, {:wx, id, _, _, {:wxCommand, evt_type, _, _, _}}}, state)
+      when evt_type in [:command_menu_selected, :command_button_clicked] and
+             id in [@tool_play_pause, @tool_step, @tool_stop] do
+    case id do
+      @tool_play_pause -> handle_transport(:play_pause)
+      @tool_step -> handle_transport(:step)
+      @tool_stop -> handle_transport(:stop)
+    end
+    refresh_transport_play_pause()
     {:ok, state}
   end
 
-  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_pause, _, _}}, state) do
-    handle_transport(:pause)
+  def handle_event({:wx_event, {:wxSize, :size, {_w, _h}, _}}, state) do
+    preserve_inspector_width()
     {:ok, state}
   end
 
-  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_step, _, _}}, state) do
-    handle_transport(:step)
-    {:ok, state}
-  end
+  def handle_event({:wx_event, {:wxSplitter, evt_type, evt, _}}, state)
+      when evt_type in [:command_splitter_sash_pos_changing, :command_splitter_sash_pos_changed] do
+    case State.get_splitter() do
+      nil ->
+        :ok
 
-  def handle_event({:wx_event, {:wxCommand, :command_menu_selected, @tool_stop, _, _}}, state) do
-    handle_transport(:stop)
+      splitter ->
+        {sw, _} = :wxWindow.getClientSize(splitter)
+        pos = :wxSplitterEvent.getSashPosition(evt)
+        if sw > 0 and pos > 0 do
+          State.put_inspector_width(sw - pos)
+          # Refresh inspector during drag so it redraws at the new size
+          if evt_type == :command_splitter_sash_pos_changing do
+            inspector = :wxSplitterWindow.getWindow2(splitter)
+            if inspector != :wx.null() and inspector != nil, do: :wxWindow.refresh(inspector)
+          end
+        end
+    end
+
     {:ok, state}
   end
 
   def handle_event(_event, state), do: {:ok, state}
+
+  defp preserve_inspector_width do
+    case {State.get_splitter(), State.get_inspector_width()} do
+      {splitter, width} when not is_nil(splitter) and not is_nil(width) ->
+        {total_w, _} = :wxWindow.getClientSize(splitter)
+        if total_w > 0 do
+          sash_pos = max(100, min(total_w - 100, total_w - width))
+          :wxSplitterWindow.setSashPosition(splitter, sash_pos)
+        end
+
+      _ ->
+        :ok
+    end
+  end
 
   defp handle_transport(:play_pause) do
     case State.get_editor_mode() do
@@ -463,6 +541,7 @@ defmodule Lunity.Editor.View do
         Lunity.Instance.resume(id)
         State.put_editor_mode(:watch)
         State.update_window_title()
+        HierarchyTree.update_instances()
     end
   end
 
@@ -473,6 +552,7 @@ defmodule Lunity.Editor.View do
         Lunity.Instance.pause(id)
         State.put_editor_mode(:paused)
         State.update_window_title()
+        HierarchyTree.update_instances()
     end
   end
 
@@ -483,12 +563,75 @@ defmodule Lunity.Editor.View do
         Lunity.Instance.step(id)
         State.put_editor_mode(:paused)
         State.update_window_title()
+        State.mark_inspector_dirty()
+        HierarchyTree.update_instances()
     end
   end
 
   defp handle_transport(:stop) do
     State.clear_watching_instance()
     State.update_window_title()
+    HierarchyTree.update_instances()
+  end
+
+  # Called from render loop: only refresh when editor_mode changes (e.g. from MCP, instance exit)
+  defp maybe_refresh_transport_play_pause(nil), do: nil
+  defp maybe_refresh_transport_play_pause(state) when not is_map(state), do: state
+  defp maybe_refresh_transport_play_pause(state) do
+    mode = State.get_editor_mode()
+    showing_pause = mode == :watch
+    toolbar_visible =
+      State.get_watching_instance() != nil and
+        State.get_editor_mode() in [:watch, :paused]
+
+    last_pause = Map.get(state, :transport_showing_pause)
+    last_visible = Map.get(state, :transport_toolbar_visible)
+
+    state =
+      if last_pause != showing_pause do
+        refresh_transport_play_pause()
+        Map.put(state, :transport_showing_pause, showing_pause)
+      else
+        state
+      end
+
+    if last_visible != toolbar_visible do
+      refresh_toolbar_visibility(toolbar_visible)
+      Map.put(state, :transport_toolbar_visible, toolbar_visible)
+    else
+      state
+    end
+  end
+
+  defp refresh_toolbar_visibility(visible) do
+    case State.get_toolbar() do
+      nil ->
+        :ok
+
+      %{panel: panel} ->
+        :wxWindow.show(panel, [{:show, visible}])
+        case State.get_splitter() do
+          nil -> :ok
+          splitter ->
+            left_panel = :wxSplitterWindow.getWindow1(splitter)
+            if left_panel != :wx.null() and left_panel != nil do
+              :wxWindow.layout(left_panel)
+            end
+            case State.get_frame() do
+              nil -> :ok
+              frame -> :wxWindow.layout(frame)
+            end
+        end
+    end
+  end
+
+  defp refresh_transport_play_pause do
+    case State.get_toolbar() do
+      nil -> :ok
+      %{play_pause: btn} ->
+        label = if State.get_editor_mode() == :watch, do: ~c"⏸", else: ~c"▶"
+        :wxButton.setLabel(btn, label)
+    end
   end
 
   # --- Click-to-select via GPU pick ---
@@ -846,7 +989,14 @@ defmodule Lunity.Editor.View do
     case SceneLoader.load_scene(path, opts) do
       {:ok, scene, entities} ->
         State.clear_watching_instance()
-        State.set_scene(scene, path, entities, :scene)
+        stored_path =
+          cond do
+            is_atom(path) -> path
+            is_binary(path) ->
+              SceneLoader.resolve_path_to_display_module(path, app: app || Lunity.project_app()) || path
+          end
+
+        State.set_scene(scene, stored_path, entities, :scene)
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, path, length(entities)})
 
@@ -906,6 +1056,22 @@ defmodule Lunity.Editor.View do
     State.put_orbit(orbit)
   end
 
+  defp sync_tree_selection_after_load do
+    case State.get_selection() do
+      {:scene_root} ->
+        HierarchyTree.select_scene_root()
+
+      {:scene_node, name, _aabb} when is_binary(name) ->
+        HierarchyTree.select_by_name(name)
+
+      {:scene_node, name} when is_binary(name) ->
+        HierarchyTree.select_by_name(name)
+
+      _ ->
+        :ok
+    end
+  end
+
   defp maybe_refresh_tree(state) do
     current_path = State.get_scene_path()
 
@@ -913,6 +1079,7 @@ defmodule Lunity.Editor.View do
       if current_path != state.tree_scene_path do
         HierarchyTree.update_scene(State.get_scene())
         State.update_window_title()
+        sync_tree_selection_after_load()
         %{state | tree_scene_path: current_path}
       else
         state
@@ -1072,7 +1239,7 @@ defmodule Lunity.Editor.View do
 
         store_id = if instance, do: instance.store_id, else: nil
 
-        State.set_scene(scene, inspect(scene_module), [], :scene)
+        State.set_scene(scene, scene_module, [], :scene)
         State.put_watching_instance(instance_id)
         State.put_instance_entity_map(entity_map)
         State.put_instance_store_id(store_id)

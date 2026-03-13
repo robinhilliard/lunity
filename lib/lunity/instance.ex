@@ -316,7 +316,9 @@ defmodule Lunity.Instance do
   defp via(id), do: {:via, Registry, {Lunity.Instance.Registry, id}}
 
   defp generate_id do
-    :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
+    counter = :persistent_term.get({__MODULE__, :id_counter}, 0) + 1
+    :persistent_term.put({__MODULE__, :id_counter}, counter)
+    String.pad_leading(Integer.to_string(counter), 4, "0")
   end
 
   @doc false

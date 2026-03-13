@@ -2,13 +2,12 @@ defmodule Lunity.Editor.HierarchyTree do
   @moduledoc """
   Manages a wxTreeCtrl for the editor's left panel.
 
-  Three root-level sections:
+  Root-level sections:
 
-  - **Source** -- nodes from the currently loaded scene definition (the source,
-    not a running instance)
   - **Game Instances** -- one expandable subtree per running Instance, showing
     its status (RUNNING/PAUSED) and live entity list
-  - **Project** -- discovered Entity, Prefab, and Scene modules
+  - **Scenes** -- the currently loaded scene (with its entity hierarchy) plus
+    other discovered scene modules
 
   Selection state is stored in `Lunity.Editor.State` for the inspector to consume.
   """
@@ -17,14 +16,13 @@ defmodule Lunity.Editor.HierarchyTree do
   import Bitwise
 
   alias Lunity.Editor.State
+  alias Lunity.Instance
 
   @tree_width 220
 
   @wx_tr_has_buttons 0x0001
   @wx_tr_lines_at_root 0x0004
   @wx_tr_hide_root 0x0800
-
-  defp theme, do: State.get_theme()
 
   @doc """
   Create the wxTreeCtrl as a child of `parent`. Stores the tree reference
@@ -35,66 +33,33 @@ defmodule Lunity.Editor.HierarchyTree do
     tree = :wxTreeCtrl.new(parent, style: style)
     :wxWindow.setMinSize(tree, {@tree_width, -1})
 
-    native_bg = :wxTreeCtrl.getBackgroundColour(tree)
-    native_fg = :wxTreeCtrl.getForegroundColour(tree)
-    State.put_tree_native_colours(native_bg, native_fg)
-
     root = :wxTreeCtrl.addRoot(tree, ~c"Root")
-    scene_root = :wxTreeCtrl.appendItem(tree, root, ~c"Source: (no scene)")
     instances_root = :wxTreeCtrl.appendItem(tree, root, ~c"Game Instances")
-    project_root = :wxTreeCtrl.appendItem(tree, root, ~c"Project")
+    scenes_root = :wxTreeCtrl.appendItem(tree, root, ~c"Scenes")
 
-    :wxTreeCtrl.expand(tree, scene_root)
     :wxTreeCtrl.expand(tree, instances_root)
-    :wxTreeCtrl.expand(tree, project_root)
+    :wxTreeCtrl.expand(tree, scenes_root)
 
     :wxTreeCtrl.connect(tree, :command_tree_sel_changed)
     :wxTreeCtrl.connect(tree, :command_tree_item_activated)
 
-    State.put_tree(tree, root, scene_root, project_root, instances_root)
+    State.put_tree(tree, root, instances_root, scenes_root)
 
     tree
   end
 
 
   @doc """
-  Rebuild the Scene section from an EAGL scene's root nodes.
+  Rebuild the Scenes section (loaded scene + discovered modules).
   """
   def update_scene(scene) do
     case State.get_tree() do
       nil ->
         :ok
 
-      {tree, _root, scene_root, _project_root, _instances_root} ->
-        do_update_scene(tree, scene_root, scene)
+      {tree, _root, _instances_root, scenes_root} ->
+        do_update_scenes_section(tree, scenes_root, scene)
     end
-  end
-
-  defp do_update_scene(tree, scene_root, nil) do
-    :wxTreeCtrl.deleteChildren(tree, scene_root)
-    :wxTreeCtrl.setItemText(tree, scene_root, ~c"Source: (no scene)")
-    :wxTreeCtrl.expand(tree, scene_root)
-  end
-
-  defp do_update_scene(tree, scene_root, scene) do
-    :wxTreeCtrl.deleteChildren(tree, scene_root)
-    State.put_tree_name_map(%{})
-
-    label =
-      case State.get_scene_path() do
-        nil -> "Source"
-        path -> "Source: #{path}"
-      end
-
-    :wxTreeCtrl.setItemText(tree, scene_root, String.to_charlist(label))
-
-    displayable_nodes = State.unwrap_scene_root(scene.root_nodes || [])
-
-    Enum.each(displayable_nodes, fn node ->
-      add_scene_node(tree, scene_root, node)
-    end)
-
-    :wxTreeCtrl.expand(tree, scene_root)
   end
 
   defp add_scene_node(tree, parent_item, node) do
@@ -108,7 +73,6 @@ defmodule Lunity.Editor.HierarchyTree do
       children = (node.children || []) |> Enum.reject(&auto_generated_node?/1)
 
       item = :wxTreeCtrl.appendItem(tree, parent_item, String.to_charlist(label))
-      set_item_default_style(tree, item)
       :wxTreeCtrl.setItemData(tree, item, {:scene_node, name})
       name_map = State.get_tree_name_map()
       State.put_tree_name_map(Map.put(name_map, name, item))
@@ -142,7 +106,7 @@ defmodule Lunity.Editor.HierarchyTree do
       nil ->
         :ok
 
-      {tree, _root, _scene_root, _project_root, instances_root} ->
+      {tree, _root, instances_root, _scenes_root} ->
         do_update_instances(tree, instances_root)
 
       _ ->
@@ -151,8 +115,6 @@ defmodule Lunity.Editor.HierarchyTree do
   end
 
   defp do_update_instances(tree, instances_root) do
-    :wxTreeCtrl.deleteChildren(tree, instances_root)
-
     instances =
       try do
         for id <- Lunity.Instance.list() do
@@ -168,22 +130,68 @@ defmodule Lunity.Editor.HierarchyTree do
         _ -> []
       end
 
+    current_ids = Enum.map(instances, fn {id, _, _, _} -> id end) |> MapSet.new()
+    existing = collect_instance_items(tree, instances_root)
+    existing_ids = Enum.map(existing, fn {id, _item} -> id end) |> MapSet.new()
+
+    if current_ids == existing_ids do
+      update_instance_labels(tree, existing, instances)
+    else
+      rebuild_instances(tree, instances_root, instances)
+    end
+  end
+
+  defp collect_instance_items(tree, parent) do
+    case :wxTreeCtrl.getChildrenCount(tree, parent, [{:recursively, false}]) do
+      0 -> []
+      _ ->
+        {first, _cookie} = :wxTreeCtrl.getFirstChild(tree, parent)
+        collect_siblings(tree, first, [])
+    end
+  rescue
+    _ -> []
+  end
+
+  defp collect_siblings(_tree, 0, acc), do: Enum.reverse(acc)
+  defp collect_siblings(tree, item, acc) do
+    entry =
+      case :wxTreeCtrl.getItemData(tree, item) do
+        {:game_instance, id, _mod} -> {id, item}
+        _ -> nil
+      end
+    next = :wxTreeCtrl.getNextSibling(tree, item)
+    if entry, do: collect_siblings(tree, next, [entry | acc]), else: collect_siblings(tree, next, acc)
+  rescue
+    _ -> Enum.reverse(acc)
+  end
+
+  defp update_instance_labels(tree, existing, instances) do
+    instance_map = Map.new(instances, fn {id, _mod, _eids, status} -> {id, status} end)
+    Enum.each(existing, fn {id, item} ->
+      case Map.get(instance_map, id) do
+        nil -> :ok
+        status ->
+          label = "#{id} #{status_to_label(status)}"
+          :wxTreeCtrl.setItemText(tree, item, String.to_charlist(label))
+      end
+    end)
+  end
+
+  defp rebuild_instances(tree, instances_root, instances) do
+    :wxTreeCtrl.deleteChildren(tree, instances_root)
+
     if instances == [] do
-      item = :wxTreeCtrl.appendItem(tree, instances_root, ~c"(no instances)")
-      set_item_default_style(tree, item)
+      :wxTreeCtrl.appendItem(tree, instances_root, ~c"(no instances)")
     else
       Enum.each(instances, fn {instance_id, scene_module, entity_ids, status} ->
-        short = scene_module |> Module.split() |> List.last()
         status_label = status_to_label(status)
-        label = "#{instance_id}  [#{short}] #{status_label}"
+        label = "#{instance_id} #{status_label}"
         inst_item = :wxTreeCtrl.appendItem(tree, instances_root, String.to_charlist(label))
-        set_item_default_style(tree, inst_item)
         :wxTreeCtrl.setItemData(tree, inst_item, {:game_instance, instance_id, scene_module})
 
         Enum.each(entity_ids, fn eid ->
-          eid_label = inspect(eid)
+          eid_label = format_entity_id(eid)
           eid_item = :wxTreeCtrl.appendItem(tree, inst_item, String.to_charlist(eid_label))
-          set_item_default_style(tree, eid_item)
           :wxTreeCtrl.setItemData(tree, eid_item, {:instance_entity, instance_id, eid})
         end)
 
@@ -198,6 +206,9 @@ defmodule Lunity.Editor.HierarchyTree do
   defp status_to_label(:paused), do: "PAUSED"
   defp status_to_label(other), do: to_string(other)
 
+  defp format_entity_id(eid) when is_atom(eid), do: Atom.to_string(eid)
+  defp format_entity_id(eid), do: inspect(eid)
+
   @doc """
   Populate the Project section by discovering loaded modules.
   """
@@ -206,62 +217,58 @@ defmodule Lunity.Editor.HierarchyTree do
       nil ->
         :ok
 
-      {tree, _root, _scene_root, project_root, _instances_root} ->
-        do_update_project(tree, project_root)
+      {tree, _root, _instances_root, scenes_root} ->
+        do_update_scenes_section(tree, scenes_root, State.get_scene())
+        :wxTreeCtrl.expand(tree, scenes_root)
 
       _ ->
         :ok
     end
   end
 
-  defp do_update_project(tree, project_root) do
-    :wxTreeCtrl.deleteChildren(tree, project_root)
+  defp do_update_scenes_section(tree, scenes_root, scene) do
+    :wxTreeCtrl.deleteChildren(tree, scenes_root)
 
-    {entities, prefabs, scenes} = discover_modules()
+    scene_path = State.get_scene_path()
+    scenes = discover_scenes()
 
-    if entities != [] do
-      ent_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Entities")
-      set_item_default_style(tree, ent_item)
+    # Exclude the currently loaded scene from the discovered list
+    loaded_mod = if is_atom(scene_path), do: scene_path, else: nil
+    other_scenes = Enum.reject(scenes, &(&1 == loaded_mod))
 
-      Enum.each(entities, fn mod ->
-        name = short_module_name(mod)
-        item = :wxTreeCtrl.appendItem(tree, ent_item, String.to_charlist(name))
-        set_item_default_style(tree, item)
-        :wxTreeCtrl.setItemData(tree, item, {:project, :entity, mod})
+    # Add loaded scene first (with entity hierarchy) if we have one
+    if scene != nil do
+      label =
+        case scene_path do
+          nil -> "(no scene)"
+          path -> State.format_scene_path_for_display(path)
+        end
+
+      scene_item = :wxTreeCtrl.appendItem(tree, scenes_root, String.to_charlist(label))
+      :wxTreeCtrl.setItemData(tree, scene_item, {:scene_root})
+      State.put_loaded_scene_item(scene_item)
+
+      State.put_tree_name_map(%{})
+      displayable_nodes = State.unwrap_scene_root(scene.root_nodes || [])
+
+      Enum.each(displayable_nodes, fn node ->
+        add_scene_node(tree, scene_item, node)
       end)
 
-      :wxTreeCtrl.expand(tree, ent_item)
+      :wxTreeCtrl.expand(tree, scene_item)
+    else
+      State.put_loaded_scene_item(nil)
+      State.put_tree_name_map(%{})
     end
 
-    if prefabs != [] do
-      pref_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Prefabs")
-      set_item_default_style(tree, pref_item)
+    # Add other discovered scene modules
+    Enum.each(other_scenes, fn mod ->
+      name = short_module_name(mod)
+      item = :wxTreeCtrl.appendItem(tree, scenes_root, String.to_charlist(name))
+      :wxTreeCtrl.setItemData(tree, item, {:project, :scene, mod})
+    end)
 
-      Enum.each(prefabs, fn mod ->
-        name = short_module_name(mod)
-        item = :wxTreeCtrl.appendItem(tree, pref_item, String.to_charlist(name))
-        set_item_default_style(tree, item)
-        :wxTreeCtrl.setItemData(tree, item, {:project, :prefab, mod})
-      end)
-
-      :wxTreeCtrl.expand(tree, pref_item)
-    end
-
-    if scenes != [] do
-      sc_item = :wxTreeCtrl.appendItem(tree, project_root, ~c"Scenes")
-      set_item_default_style(tree, sc_item)
-
-      Enum.each(scenes, fn mod ->
-        name = short_module_name(mod)
-        item = :wxTreeCtrl.appendItem(tree, sc_item, String.to_charlist(name))
-        set_item_default_style(tree, item)
-        :wxTreeCtrl.setItemData(tree, item, {:project, :scene, mod})
-      end)
-
-      :wxTreeCtrl.expand(tree, sc_item)
-    end
-
-    :wxTreeCtrl.expand(tree, project_root)
+    :wxTreeCtrl.expand(tree, scenes_root)
   end
 
   @doc """
@@ -270,31 +277,32 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def handle_selection(tree, item) do
     try do
-      prev_sel = State.get_tree_selected_item()
       State.put_tree_selected_item(item)
-      if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
 
       case :wxTreeCtrl.getItemData(tree, item) do
+        {:scene_root} = data ->
+          maybe_return_to_scene_view()
+          State.put_selection(data)
+          data
+
         {:scene_node, name} = data ->
-          t = theme()
-          set_item_style(tree, item, t.select_bg, t.select_fg)
-          State.put_tree_selected_item(item)
+          maybe_return_to_scene_view()
           selection = resolve_scene_node_selection(name)
           State.put_selection(selection)
           data
 
         {:game_instance, instance_id, scene_module} = data ->
-          t = theme()
-          set_item_style(tree, item, t.select_bg, t.select_fg)
-          State.put_tree_selected_item(item)
           State.put_watch_command({:watch, instance_id, scene_module})
           State.put_selection(data)
           data
 
-        {:instance_entity, _instance_id, _entity_id} = data ->
-          t = theme()
-          set_item_style(tree, item, t.select_bg, t.select_fg)
-          State.put_tree_selected_item(item)
+        {:instance_entity, instance_id, _entity_id} = data ->
+          maybe_watch_instance_for_entity(instance_id)
+          State.put_selection(data)
+          data
+
+        {:project, :scene, mod} = data ->
+          maybe_return_to_scene_view(mod)
           State.put_selection(data)
           data
 
@@ -312,6 +320,42 @@ defmodule Lunity.Editor.HierarchyTree do
         nil
     end
   end
+
+  defp maybe_watch_instance_for_entity(instance_id) do
+    case Instance.get(instance_id) do
+      %{scene_module: mod} when not is_nil(mod) ->
+        State.put_watch_command({:watch, instance_id, mod})
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp maybe_return_to_scene_view do
+    case State.get_watching_instance() do
+      nil ->
+        :ok
+
+      instance_id ->
+        case Instance.get(instance_id) do
+          %{scene_module: mod} when not is_nil(mod) ->
+            State.put_load_command(mod)
+
+          _ ->
+            :ok
+        end
+    end
+  end
+
+  defp maybe_return_to_scene_view(mod) when not is_nil(mod) do
+    if State.get_watching_instance() != nil do
+      State.put_load_command(mod)
+    end
+
+    :ok
+  end
+
+  defp maybe_return_to_scene_view(_), do: :ok
 
   defp resolve_scene_node_selection(name) do
     case State.get_scene() do
@@ -337,7 +381,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def poll_hover do
     case State.get_tree() do
-      {tree, _, _, _, _} -> do_poll_hover(tree)
+      {tree, _, _, _} -> do_poll_hover(tree)
       _ -> nil
     end
   rescue
@@ -349,16 +393,10 @@ defmodule Lunity.Editor.HierarchyTree do
     {lx, ly} = :wxWindow.screenToClient(tree, {gx, gy})
     {tw, th} = :wxWindow.getSize(tree)
 
-    prev_hover = State.get_tree_hover_item()
-
     if lx >= 0 and ly >= 0 and lx < tw and ly < th do
       {item, _flags} = :wxTreeCtrl.hitTest(tree, {lx, ly})
 
       if item != 0 do
-        if prev_hover != nil and prev_hover != item, do: reset_item_style(tree, prev_hover)
-        sel_item = State.get_tree_selected_item()
-        t = theme()
-        if item != sel_item, do: set_item_style(tree, item, t.hover_bg, t.hover_fg)
         State.put_tree_hover_item(item)
 
         case :wxTreeCtrl.getItemData(tree, item) do
@@ -366,12 +404,10 @@ defmodule Lunity.Editor.HierarchyTree do
           _ -> nil
         end
       else
-        if prev_hover, do: reset_item_style(tree, prev_hover)
         State.put_tree_hover_item(nil)
         nil
       end
     else
-      if prev_hover, do: reset_item_style(tree, prev_hover)
       State.put_tree_hover_item(nil)
       nil
     end
@@ -401,7 +437,7 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def select_by_name(name) when is_binary(name) do
     case State.get_tree() do
-      {tree, _, _, _, _} ->
+      {tree, _, _, _} ->
         name_map = State.get_tree_name_map()
 
         case Map.get(name_map, name) do
@@ -409,15 +445,9 @@ defmodule Lunity.Editor.HierarchyTree do
             :ok
 
           item ->
-            prev_sel = State.get_tree_selected_item()
             State.put_tree_selected_item(item)
-            if prev_sel != nil and prev_sel != item, do: reset_item_style(tree, prev_sel)
-            t = theme()
-            set_item_style(tree, item, t.select_bg, t.select_fg)
             :wxTreeCtrl.selectItem(tree, item)
             :wxTreeCtrl.ensureVisible(tree, item)
-            # Give tree focus so selection shows blue (macOS uses gray when unfocused)
-            :wxWindow.setFocus(tree)
         end
 
       _ ->
@@ -431,19 +461,14 @@ defmodule Lunity.Editor.HierarchyTree do
   def select_by_name(_), do: :ok
 
   @doc """
-  Clear the tree selection (e.g. when deselecting from viewport).
-  Resets the previously selected item to default styling (white bg, black text).
+  Programmatically select the Source (scene root) item in the tree.
   """
-  def clear_selection do
-    case State.get_tree() do
-      {tree, _, _, _, _} ->
-        prev_sel = State.get_tree_selected_item()
-
-        if prev_sel != nil do
-          set_item_default_style(tree, prev_sel)
-          :wxTreeCtrl.unselect(tree)
-          State.put_tree_selected_item(nil)
-        end
+  def select_scene_root do
+    case {State.get_tree(), State.get_loaded_scene_item()} do
+      {{tree, _, _, _}, scene_item} when scene_item != nil ->
+        State.put_tree_selected_item(scene_item)
+        :wxTreeCtrl.selectItem(tree, scene_item)
+        :wxTreeCtrl.ensureVisible(tree, scene_item)
 
       _ ->
         :ok
@@ -452,14 +477,21 @@ defmodule Lunity.Editor.HierarchyTree do
     _ -> :ok
   end
 
-  defp set_item_default_style(tree, item) do
-    try do
-      {bg, fg} = State.get_tree_native_colours()
-      :wxTreeCtrl.setItemBackgroundColour(tree, item, bg)
-      :wxTreeCtrl.setItemTextColour(tree, item, fg)
-    rescue
-      _ -> :ok
+  @doc """
+  Clear the tree selection (e.g. when deselecting from viewport).
+  Resets the previously selected item to default styling (white bg, black text).
+  """
+  def clear_selection do
+    case State.get_tree() do
+      {tree, _, _, _} ->
+        :wxTreeCtrl.unselect(tree)
+        State.put_tree_selected_item(nil)
+
+      _ ->
+        :ok
     end
+  rescue
+    _ -> :ok
   end
 
   @doc """
@@ -468,23 +500,14 @@ defmodule Lunity.Editor.HierarchyTree do
   """
   def hover_by_name(name) when is_binary(name) do
     case State.get_tree() do
-      {tree, _, _, _, _} ->
+      {_tree, _, _, _} ->
         name_map = State.get_tree_name_map()
-        prev_hover = State.get_tree_hover_item()
 
         case Map.get(name_map, name) do
           nil ->
-            if prev_hover, do: reset_item_style(tree, prev_hover)
             State.put_tree_hover_item(nil)
 
-          item when item == prev_hover ->
-            :ok
-
           item ->
-            if prev_hover, do: reset_item_style(tree, prev_hover)
-            sel_item = State.get_tree_selected_item()
-            t = theme()
-            if item != sel_item, do: set_item_style(tree, item, t.hover_bg, t.hover_fg)
             State.put_tree_hover_item(item)
         end
 
@@ -497,9 +520,7 @@ defmodule Lunity.Editor.HierarchyTree do
 
   def hover_by_name(nil) do
     case State.get_tree() do
-      {tree, _, _, _, _} ->
-        prev_hover = State.get_tree_hover_item()
-        if prev_hover, do: reset_item_style(tree, prev_hover)
+      {_tree, _, _, _} ->
         State.put_tree_hover_item(nil)
 
       _ ->
@@ -512,27 +533,26 @@ defmodule Lunity.Editor.HierarchyTree do
   def hover_by_name(_), do: :ok
 
   @doc """
-  Handle a tree item activation (double-click / Enter). Loads scenes or
-  inspects prefabs from the Project section.
+  Handle a tree item activation (double-click / Enter). Loads scenes from
+  the Scenes section.
   """
   def handle_activation(tree, item) do
     try do
       case :wxTreeCtrl.getItemData(tree, item) do
+        {:scene_root} ->
+          maybe_return_to_scene_view()
+          :ok
+
         {:project, :scene, mod} ->
           State.put_load_command(mod)
           :ok
 
-        {:project, :prefab, mod} ->
-          glb_id = if function_exported?(mod, :__glb_id__, 0), do: mod.__glb_id__(), else: nil
-
-          if glb_id do
-            State.put_load_prefab_command(glb_id)
-          end
-
-          :ok
-
         {:game_instance, instance_id, scene_module} ->
           State.put_watch_command({:watch, instance_id, scene_module})
+          :ok
+
+        {:scene_node, _name} ->
+          maybe_return_to_scene_view()
           :ok
 
         _ ->
@@ -544,28 +564,12 @@ defmodule Lunity.Editor.HierarchyTree do
   end
 
   @doc false
-  def discover_modules do
-    all_loaded =
-      :code.all_loaded()
-      |> Enum.map(fn {mod, _} -> mod end)
-      |> Enum.filter(&is_atom/1)
-
-    entities =
-      all_loaded
-      |> Enum.filter(&exports_function?(&1, :__components__, 0))
-      |> Enum.sort()
-
-    prefabs =
-      all_loaded
-      |> Enum.filter(&exports_function?(&1, :__glb_id__, 0))
-      |> Enum.sort()
-
-    scenes =
-      all_loaded
-      |> Enum.filter(&exports_function?(&1, :__scene_def__, 0))
-      |> Enum.sort()
-
-    {entities, prefabs, scenes}
+  def discover_scenes do
+    :code.all_loaded()
+    |> Enum.map(fn {mod, _} -> mod end)
+    |> Enum.filter(&is_atom/1)
+    |> Enum.filter(&exports_function?(&1, :__scene_def__, 0))
+    |> Enum.sort()
   end
 
   defp exports_function?(mod, fun, arity) do
@@ -578,27 +582,4 @@ defmodule Lunity.Editor.HierarchyTree do
     |> List.last()
   end
 
-  defp set_item_style(tree, item, {br, bg, bb}, {fr, fg, fb}) do
-    try do
-      :wxTreeCtrl.setItemBackgroundColour(tree, item, {br, bg, bb, 255})
-      :wxTreeCtrl.setItemTextColour(tree, item, {fr, fg, fb, 255})
-    rescue
-      _ -> :ok
-    end
-  end
-
-  defp reset_item_style(tree, item) do
-    try do
-      sel_item = State.get_tree_selected_item()
-
-      if item == sel_item do
-        t = theme()
-        set_item_style(tree, item, t.select_bg, t.select_fg)
-      else
-        set_item_default_style(tree, item)
-      end
-    rescue
-      _ -> :ok
-    end
-  end
 end

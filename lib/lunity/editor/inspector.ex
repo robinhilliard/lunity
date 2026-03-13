@@ -14,38 +14,43 @@ defmodule Lunity.Editor.Inspector do
 
   @inspector_width 260
 
+  @grab_width 4
+
   @doc "Create the inspector panel as a child of `parent`. Returns the widget."
   def create(parent) do
-    t = State.get_theme()
+    container = :wxPanel.new(parent)
+    :wxWindow.setMinSize(container, {@inspector_width + @grab_width, -1})
 
-    panel = :wxPanel.new(parent)
+    h_sizer = :wxBoxSizer.new(@wx_horizontal)
+
+    grab = :wxPanel.new(container)
+    :wxWindow.setMinSize(grab, {@grab_width, 1})
+    :wxWindow.setBackgroundColour(grab, {200, 200, 200})
+    :wxSizer.add(h_sizer, grab, proportion: 0, flag: 0)
+    :wxSizer.setItemMinSize(h_sizer, grab, @grab_width, 1)
+
+    panel = :wxPanel.new(container)
     :wxWindow.setMinSize(panel, {@inspector_width, -1})
-    :wxWindow.setBackgroundColour(panel, t.panel_bg)
 
     sizer = :wxBoxSizer.new(@wx_vertical)
 
-    label = :wxStaticText.new(panel, -1, ~c"Inspector")
-    font = :wxFont.new(12, 70, 90, 92)
-    :wxStaticText.setFont(label, font)
-    :wxStaticText.setForegroundColour(label, t.window_fg)
-    :wxSizer.add(sizer, label, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 6)
-
-    grid = :wxGrid.new(panel, -1)
+    grid = :wxGrid.new(panel, -1, [style: @wx_no_border])
     :wxGrid.createGrid(grid, 0, 2)
-    :wxGrid.setColLabelValue(grid, 0, ~c"Property")
-    :wxGrid.setColLabelValue(grid, 1, ~c"Value")
     :wxGrid.setRowLabelSize(grid, 0)
+    :wxGrid.setColLabelSize(grid, 0)
     :wxGrid.setColSize(grid, 0, 120)
     :wxGrid.setColSize(grid, 1, 130)
+    :wxGrid.enableGridLines(grid, [{:enable, false}])
     :wxGrid.enableEditing(grid, false)
-    :wxWindow.setBackgroundColour(grid, t.window_bg)
-    :wxWindow.setForegroundColour(grid, t.window_fg)
 
     :wxSizer.add(sizer, grid, proportion: 1, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 4)
     :wxPanel.setSizer(panel, sizer)
 
+    :wxSizer.add(h_sizer, panel, proportion: 1, flag: @wx_expand ||| Bitwise.bsl(1, 6), border: 0)
+    :wxPanel.setSizer(container, h_sizer)
+
     State.put_inspector(grid)
-    panel
+    container
   end
 
   @doc "Refresh the inspector with component data for the currently selected entity."
@@ -56,6 +61,9 @@ defmodule Lunity.Editor.Inspector do
     case State.get_selection() do
       {:instance_entity, instance_id, entity_id} ->
         refresh_entity(grid, instance_id, entity_id)
+
+      {:scene_root} ->
+        refresh_scene_root(grid)
 
       {:scene_node, name, _aabb} ->
         refresh_scene_node(grid, name)
@@ -68,6 +76,12 @@ defmodule Lunity.Editor.Inspector do
     end
   catch
     :no_inspector -> :ok
+  end
+
+  defp refresh_scene_root(grid) do
+    path = State.get_scene_path() || "(no scene)"
+    path_str = State.format_scene_path_for_display(path) || "(no scene)"
+    show_message(grid, "Scene: #{path_str}")
   end
 
   defp refresh_scene_node(grid, name) do
@@ -84,15 +98,19 @@ defmodule Lunity.Editor.Inspector do
       throw(:done)
     end
 
+    props = node.properties || %{}
+
     rows =
       [
+        prefab_entity_row("Prefab", Map.get(props, "prefab")),
+        prefab_entity_row("Entity", Map.get(props, "entity")),
         node_prop("Name", node.name),
         node_prop("Position", node.position),
         node_prop("Rotation", node.rotation),
         node_prop("Scale", node.scale),
         light_rows(node.light),
         camera_rows(node.camera),
-        properties_rows(node.properties)
+        properties_rows(props, ["prefab", "entity"])
       ]
       |> List.flatten()
       |> Enum.reject(&is_nil/1)
@@ -104,6 +122,13 @@ defmodule Lunity.Editor.Inspector do
 
   defp node_prop(_label, nil), do: nil
   defp node_prop(label, val), do: {label, format_value(val, %{})}
+
+  defp prefab_entity_row(_label, nil), do: nil
+  defp prefab_entity_row(label, val) when is_atom(val) do
+    {label, inspect(val)}
+  end
+  defp prefab_entity_row(label, val) when is_binary(val), do: {label, val}
+  defp prefab_entity_row(label, val), do: {label, format_value(val, %{})}
 
   defp light_rows(nil), do: []
 
@@ -129,13 +154,17 @@ defmodule Lunity.Editor.Inspector do
 
   defp camera_rows(_), do: []
 
-  defp properties_rows(nil), do: []
+  defp properties_rows(nil, _exclude), do: []
 
-  defp properties_rows(props) when is_map(props) do
-    Enum.map(props, fn {k, v} -> node_prop(to_string(k), v) end)
+  defp properties_rows(props, exclude) when is_map(props) and is_list(exclude) do
+    exclude_set = MapSet.new(exclude)
+
+    props
+    |> Enum.reject(fn {k, _} -> MapSet.member?(exclude_set, to_string(k)) end)
+    |> Enum.map(fn {k, v} -> node_prop(to_string(k), v) end)
   end
 
-  defp properties_rows(_), do: []
+  defp properties_rows(_, _), do: []
 
   defp refresh_entity(grid, instance_id, entity_id) do
     instance = Lunity.Instance.get(instance_id)

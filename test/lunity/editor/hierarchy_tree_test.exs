@@ -3,47 +3,21 @@ defmodule Lunity.Editor.HierarchyTreeTest do
 
   alias Lunity.Editor.HierarchyTree
 
-  describe "discover_modules/0" do
-    test "returns three lists sorted alphabetically" do
-      {entities, prefabs, scenes} = HierarchyTree.discover_modules()
+  describe "discover_scenes/0" do
+    test "returns scenes sorted alphabetically" do
+      scenes = HierarchyTree.discover_scenes()
 
-      assert is_list(entities)
-      assert is_list(prefabs)
       assert is_list(scenes)
-
-      assert entities == Enum.sort(entities)
-      assert prefabs == Enum.sort(prefabs)
       assert scenes == Enum.sort(scenes)
     end
 
-    test "entities have __components__/0" do
-      {entities, _, _} = HierarchyTree.discover_modules()
-
-      Enum.each(entities, fn mod ->
-        assert function_exported?(mod, :__components__, 0),
-               "#{inspect(mod)} should export __components__/0"
-      end)
-    end
-
     test "scenes have __scene_def__/0" do
-      {_, _, scenes} = HierarchyTree.discover_modules()
+      scenes = HierarchyTree.discover_scenes()
 
       Enum.each(scenes, fn mod ->
         assert function_exported?(mod, :__scene_def__, 0),
                "#{inspect(mod)} should export __scene_def__/0"
       end)
-    end
-
-    test "lists are disjoint (no module appears in multiple categories)" do
-      {entities, prefabs, scenes} = HierarchyTree.discover_modules()
-
-      ent_set = MapSet.new(entities)
-      pref_set = MapSet.new(prefabs)
-      scene_set = MapSet.new(scenes)
-
-      assert MapSet.disjoint?(ent_set, pref_set)
-      assert MapSet.disjoint?(ent_set, scene_set)
-      assert MapSet.disjoint?(pref_set, scene_set)
     end
   end
 
