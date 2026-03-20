@@ -47,6 +47,31 @@ defmodule Lunity.Instance do
     end
   end
 
+  @doc """
+  Stops the instance and starts a fresh one with the same id and scene module.
+
+  ECS state is recreated from the scene (same as a new `start/2`).
+  Returns `:ok` or `{:error, reason}`.
+  """
+  def restart(instance_id) do
+    case get(instance_id) do
+      nil ->
+        {:error, :not_found}
+
+      %{scene_module: mod} ->
+        case stop(instance_id) do
+          :ok ->
+            case start(mod, id: instance_id) do
+              {:ok, _pid} -> :ok
+              {:error, reason} -> {:error, reason}
+            end
+
+          {:error, :not_found} ->
+            {:error, :not_found}
+        end
+    end
+  end
+
   @doc "Lists all active instance IDs."
   def list do
     Registry.select(Lunity.Instance.Registry, [{{:"$1", :_, :_}, [], [:"$1"]}])

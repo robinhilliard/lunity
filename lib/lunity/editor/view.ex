@@ -31,7 +31,7 @@ defmodule Lunity.Editor.View do
 
   @tool_play_pause 1001
   @tool_step 1003
-  @tool_stop 1004
+  @tool_reset 1004
 
 
   def run(opts \\ []) do
@@ -110,12 +110,12 @@ defmodule Lunity.Editor.View do
 
     play_btn = :wxButton.new(panel, @tool_play_pause, [{:label, ~c"▶"}])
     step_btn = :wxButton.new(panel, @tool_step, [{:label, ~c"▶|"}])
-    stop_btn = :wxButton.new(panel, @tool_stop, [{:label, ~c"■"}])
+    reset_btn = :wxButton.new(panel, @tool_reset, [{:label, ~c"↻"}])
 
     sizer = :wxBoxSizer.new(@wx_horizontal)
     :wxSizer.add(sizer, play_btn, flag: 0)
     :wxSizer.add(sizer, step_btn, flag: 0)
-    :wxSizer.add(sizer, stop_btn, flag: 0)
+    :wxSizer.add(sizer, reset_btn, flag: 0)
     :wxPanel.setSizer(panel, sizer)
 
     transport = %{panel: panel, play_pause: play_btn}
@@ -236,7 +236,7 @@ defmodule Lunity.Editor.View do
     state
   end
 
-  defp render_selection_highlight(_scene, view, proj) do
+  defp render_selection_highlight(scene, view, proj) do
     sel = State.get_selection()
     hover = State.get_hover()
 
@@ -247,6 +247,7 @@ defmodule Lunity.Editor.View do
         sel_name =
           case sel do
             {:scene_node, n, _} -> n
+            {:instance_entity, _, eid} -> instance_entity_scene_name(eid)
             _ -> nil
           end
 
@@ -262,12 +263,32 @@ defmodule Lunity.Editor.View do
       {:scene_node, _name, {min_pt, max_pt}} ->
         EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
 
+      {:instance_entity, _iid, entity_id} ->
+        name = instance_entity_scene_name(entity_id)
+
+        case EAGL.Scene.find_node_with_transform(scene, name) do
+          {:ok, node, world} ->
+            case subtree_world_aabb(node, world) do
+              {min_pt, max_pt} ->
+                EAGL.Line.draw_aabb(min_pt, max_pt, view, proj, vec3(1.0, 0.7, 0.2))
+
+              _ ->
+                :ok
+            end
+
+          _ ->
+            :ok
+        end
+
       _ ->
         :ok
     end
 
     :gl.enable(@gl_depth_test)
   end
+
+  defp instance_entity_scene_name(eid) when is_atom(eid), do: Atom.to_string(eid)
+  defp instance_entity_scene_name(eid), do: inspect(eid)
 
   @doc false
   def subtree_world_aabb(node, world_matrix) do
@@ -451,7 +472,7 @@ defmodule Lunity.Editor.View do
     {:ok, state}
   end
 
-  # F5 = toggle play/pause, F6 = step, Escape = stop watching
+  # F5 = toggle play/pause, F6 = step, Escape = exit instance watch
   def handle_event({:key, 344}, state) do
     handle_transport(:play_pause)
     refresh_transport_play_pause()
@@ -465,7 +486,7 @@ defmodule Lunity.Editor.View do
   end
 
   def handle_event({:key, 27}, state) do
-    handle_transport(:stop)
+    handle_transport(:exit_watch)
     refresh_transport_play_pause()
     {:ok, state}
   end
@@ -473,11 +494,11 @@ defmodule Lunity.Editor.View do
   # Transport button clicks (command_button_clicked) and menu items (command_menu_selected)
   def handle_event({:wx_event, {:wx, id, _, _, {:wxCommand, evt_type, _, _, _}}}, state)
       when evt_type in [:command_menu_selected, :command_button_clicked] and
-             id in [@tool_play_pause, @tool_step, @tool_stop] do
+             id in [@tool_play_pause, @tool_step, @tool_reset] do
     case id do
       @tool_play_pause -> handle_transport(:play_pause)
       @tool_step -> handle_transport(:step)
-      @tool_stop -> handle_transport(:stop)
+      @tool_reset -> handle_transport(:reset)
     end
     refresh_transport_play_pause()
     {:ok, state}
@@ -568,10 +589,66 @@ defmodule Lunity.Editor.View do
     end
   end
 
-  defp handle_transport(:stop) do
+  defp handle_transport(:exit_watch) do
     State.clear_watching_instance()
     State.update_window_title()
     HierarchyTree.update_instances()
+  end
+
+  defp handle_transport(:reset) do
+    case State.get_watching_instance() do
+      nil ->
+        :ok
+
+      id ->
+        was_paused =
+          case Lunity.Instance.get(id) do
+            %{status: :paused} -> true
+            _ -> false
+          end
+
+        case Lunity.Instance.restart(id) do
+          :ok ->
+            refresh_watched_instance_bindings(id, was_paused: was_paused)
+
+          _ ->
+            :ok
+        end
+    end
+  end
+
+  defp refresh_watched_instance_bindings(id, opts) do
+    was_paused = Keyword.get(opts, :was_paused, false)
+
+    case Lunity.Instance.get(id) do
+      %{entity_ids: eids} = instance ->
+        eids = eids || []
+
+        entity_map =
+          for name <- eids, into: %{} do
+            {to_string(name), name}
+          end
+
+        State.put_instance_entity_map(entity_map)
+        State.put_instance_store_id(instance.store_id)
+        State.put_position_component(Lunity.Components.Position)
+
+        if was_paused do
+          Lunity.Instance.pause(id)
+          State.put_editor_mode(:paused)
+        else
+          State.put_editor_mode(:watch)
+        end
+
+        State.update_window_title()
+        State.mark_inspector_dirty()
+        HierarchyTree.update_instances()
+
+      _ ->
+        State.clear_watching_instance()
+        State.update_window_title()
+        HierarchyTree.update_instances()
+    end
   end
 
   # Called from render loop: only refresh when editor_mode changes (e.g. from MCP, instance exit)
@@ -655,8 +732,33 @@ defmodule Lunity.Editor.View do
         {dsl_name, dsl_aabb} = resolve_dsl_node(scene, world)
 
         if dsl_name && dsl_aabb do
-          State.put_selection({:scene_node, dsl_name, dsl_aabb})
-          HierarchyTree.select_by_name(dsl_name)
+          case State.get_watching_instance() do
+            nil ->
+              State.put_selection({:scene_node, dsl_name, dsl_aabb})
+              HierarchyTree.select_by_name(dsl_name)
+
+            instance_id ->
+              # Never call HierarchyTree.select_by_name/1 while watching: it selects the Scenes
+              # tree and fires handle_selection → maybe_return_to_scene_view/0. Build the name map
+              # from the live Instance (ETS can be empty or stale vs Instance.get/1).
+              entity_map = build_entity_name_map_for_instance(instance_id)
+              if map_size(entity_map) > 0, do: State.put_instance_entity_map(entity_map)
+
+              case Map.get(entity_map, dsl_name) do
+                nil ->
+                  State.put_selection({:scene_node, dsl_name, dsl_aabb})
+                  State.mark_inspector_dirty()
+
+                entity_id ->
+                  Lunity.Instance.pause(instance_id)
+                  State.put_editor_mode(:paused)
+                  State.put_selection({:instance_entity, instance_id, entity_id})
+                  HierarchyTree.select_instance_entity(instance_id, entity_id)
+                  State.update_window_title()
+                  HierarchyTree.update_instances()
+                  State.mark_inspector_dirty()
+              end
+          end
         end
 
         state
@@ -665,6 +767,16 @@ defmodule Lunity.Editor.View do
         State.put_selection(nil)
         HierarchyTree.select_by_name(nil)
         state
+    end
+  end
+
+  defp build_entity_name_map_for_instance(instance_id) do
+    case Lunity.Instance.get(instance_id) do
+      %{entity_ids: eids} ->
+        for n <- eids || [], into: %{}, do: {to_string(n), n}
+
+      _ ->
+        %{}
     end
   end
 
@@ -997,6 +1109,7 @@ defmodule Lunity.Editor.View do
           end
 
         State.set_scene(scene, stored_path, entities, :scene)
+        HierarchyTree.refresh_scene_node_selection_aabb()
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, path, length(entities)})
 
@@ -1034,6 +1147,7 @@ defmodule Lunity.Editor.View do
     case PrefabLoader.load_prefab(id, shader_program: program) do
       {:ok, scene, _config} ->
         State.set_scene(scene, id, [], :prefab)
+        HierarchyTree.refresh_scene_node_selection_aabb()
         orbit = State.take_orbit_after_load() || EAGL.OrbitCamera.fit_to_scene(scene)
         State.put_load_result({:ok, id, 0})
 
@@ -1240,6 +1354,7 @@ defmodule Lunity.Editor.View do
         store_id = if instance, do: instance.store_id, else: nil
 
         State.set_scene(scene, scene_module, [], :scene)
+        HierarchyTree.refresh_scene_node_selection_aabb()
         State.put_watching_instance(instance_id)
         State.put_instance_entity_map(entity_map)
         State.put_instance_store_id(store_id)

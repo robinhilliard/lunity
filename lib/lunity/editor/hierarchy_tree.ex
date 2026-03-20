@@ -10,6 +10,22 @@ defmodule Lunity.Editor.HierarchyTree do
     other discovered scene modules
 
   Selection state is stored in `Lunity.Editor.State` for the inspector to consume.
+
+  ## Scene node name vs instance entity
+
+  A scene definition uses a single node name per object (e.g. `"ball"`). The
+  running instance creates an ECS entity with the same name (e.g. `:ball`).
+  `Lunity.Editor.State` keeps `instance_entity_map` as `%{\"ball\" => :ball}`.
+
+  There is no separate "game name" and "scene name" for the same object — they
+  are the same identifier. **Disambiguation is by UI context**, not by
+  embedding two names in one string:
+
+  - Tree items under **Scenes** carry `{:scene_node, name}` — user intent is
+    the scene graph / file (may queue leaving instance watch).
+  - Tree items under **Game Instances** carry `{:instance_entity, instance_id, entity_id}`.
+  - Viewport picks while watching an instance resolve to `{:instance_entity, ...}`
+    when the picked mesh maps to an entity (`view.ex` `do_viewport_pick`).
   """
 
   use WX.Const
@@ -286,13 +302,17 @@ defmodule Lunity.Editor.HierarchyTree do
           data
 
         {:scene_node, name} = data ->
+          # Scenes-tree row only (not Game Instances). Restore scene-from-disk view when watching.
           maybe_return_to_scene_view()
           selection = resolve_scene_node_selection(name)
           State.put_selection(selection)
           data
 
         {:game_instance, instance_id, scene_module} = data ->
-          State.put_watch_command({:watch, instance_id, scene_module})
+          if State.get_watching_instance() != instance_id do
+            State.put_watch_command({:watch, instance_id, scene_module})
+          end
+
           State.put_selection(data)
           data
 
@@ -322,12 +342,16 @@ defmodule Lunity.Editor.HierarchyTree do
   end
 
   defp maybe_watch_instance_for_entity(instance_id) do
-    case Instance.get(instance_id) do
-      %{scene_module: mod} when not is_nil(mod) ->
-        State.put_watch_command({:watch, instance_id, mod})
+    if State.get_watching_instance() == instance_id do
+      :ok
+    else
+      case Instance.get(instance_id) do
+        %{scene_module: mod} when not is_nil(mod) ->
+          State.put_watch_command({:watch, instance_id, mod})
 
-      _ ->
-        :ok
+        _ ->
+          :ok
+      end
     end
   end
 
@@ -371,6 +395,25 @@ defmodule Lunity.Editor.HierarchyTree do
           nil ->
             {:scene_node, name}
         end
+    end
+  end
+
+  @doc """
+  Recomputes the selection AABB from the current scene graph after a scene load.
+
+  Call after `State.set_scene/4` so cached `{:scene_node, name, aabb}` matches meshes
+  (e.g. after switching from a live instance to an on-disk scene).
+  """
+  def refresh_scene_node_selection_aabb do
+    case State.get_selection() do
+      {:scene_node, name} when is_binary(name) ->
+        State.put_selection(resolve_scene_node_selection(name))
+
+      {:scene_node, name, _} when is_binary(name) ->
+        State.put_selection(resolve_scene_node_selection(name))
+
+      _ ->
+        :ok
     end
   end
 
@@ -461,6 +504,99 @@ defmodule Lunity.Editor.HierarchyTree do
   def select_by_name(_), do: :ok
 
   @doc """
+  Select the entity row under Game Instances (e.g. after a viewport pick while
+  watching that instance). Does not switch to on-disk scene view.
+  """
+  def select_instance_entity(instance_id, entity_id) do
+    case State.get_tree() do
+      {tree, _root, instances_root, _scenes_root} ->
+        case find_instance_item(tree, instances_root, instance_id) do
+          nil ->
+            :ok
+
+          inst_item ->
+            case find_instance_entity_item(tree, inst_item, instance_id, entity_id) do
+              nil ->
+                :ok
+
+              item ->
+                State.put_tree_selected_item(item)
+                :wxTreeCtrl.selectItem(tree, item)
+                :wxTreeCtrl.ensureVisible(tree, item)
+            end
+        end
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp find_instance_item(tree, instances_root, instance_id) do
+    case first_tree_child(tree, instances_root) do
+      nil -> nil
+      first -> find_instance_item_siblings(tree, first, instance_id)
+    end
+  end
+
+  defp find_instance_item_siblings(tree, item, instance_id) do
+    case :wxTreeCtrl.getItemData(tree, item) do
+      {:game_instance, ^instance_id, _} ->
+        item
+
+      _ ->
+        next = :wxTreeCtrl.getNextSibling(tree, item)
+
+        if next == 0 do
+          nil
+        else
+          find_instance_item_siblings(tree, next, instance_id)
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp find_instance_entity_item(tree, inst_item, instance_id, entity_id) do
+    case first_tree_child(tree, inst_item) do
+      nil -> nil
+      first -> find_instance_entity_siblings(tree, first, instance_id, entity_id)
+    end
+  end
+
+  defp find_instance_entity_siblings(tree, item, instance_id, entity_id) do
+    case :wxTreeCtrl.getItemData(tree, item) do
+      {:instance_entity, ^instance_id, ^entity_id} ->
+        item
+
+      _ ->
+        next = :wxTreeCtrl.getNextSibling(tree, item)
+
+        if next == 0 do
+          nil
+        else
+          find_instance_entity_siblings(tree, next, instance_id, entity_id)
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp first_tree_child(tree, parent) do
+    case :wxTreeCtrl.getChildrenCount(tree, parent, [{:recursively, false}]) do
+      0 ->
+        nil
+
+      _ ->
+        {first, _cookie} = :wxTreeCtrl.getFirstChild(tree, parent)
+        first
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc """
   Programmatically select the Source (scene root) item in the tree.
   """
   def select_scene_root do
@@ -548,7 +684,10 @@ defmodule Lunity.Editor.HierarchyTree do
           :ok
 
         {:game_instance, instance_id, scene_module} ->
-          State.put_watch_command({:watch, instance_id, scene_module})
+          if State.get_watching_instance() != instance_id do
+            State.put_watch_command({:watch, instance_id, scene_module})
+          end
+
           :ok
 
         {:scene_node, _name} ->
