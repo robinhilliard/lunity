@@ -168,12 +168,12 @@ defmodule Lunity.MCP.ServerTest do
       assert {:ok, %{content: [%{type: "text", text: text}], is_error?: false}, _} =
                Lunity.MCP.Server.handle_tool_call("pause", %{}, nil)
 
-      assert text =~ "paused"
+      assert text =~ "Paused"
 
       assert {:ok, %{content: [%{type: "text", text: text2}], is_error?: false}, _} =
                Lunity.MCP.Server.handle_tool_call("resume", %{}, nil)
 
-      assert text2 =~ "resumed"
+      assert text2 =~ "Resumed"
     end
 
     test "clear_annotations" do

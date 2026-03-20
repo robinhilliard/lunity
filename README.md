@@ -9,6 +9,13 @@
 
 Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, an Nx-backed component system with tensor and structured storage, game instance management, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
 
+## Design goals
+
+- **BEAM + wx for engine and editor** — The simulation and authoring environment run on the **BEAM**. The editor uses **wxWidgets** and OpenGL (eagl) for the viewport; it is not driven by a separate native shell such as SDL for authoring.
+- **WebGL clients** — Game clients target the **browser** (WebGL). Multiplayer and shared assets assume web clients alongside the server-side engine.
+- **Portable contracts; Web APIs as the compatibility reference** — Cross-platform features (PCM audio, gamepads, timing visible to game code) are defined by **stable contracts** at the engine boundary. Where the web exposes a standard, **browser APIs set the reference semantics** (e.g. Web Audio–style PCM streaming, [W3C Gamepad API](https://w3c.github.io/gamepad/) button and axis ordering). Native Rustler NIFs under `native/` implement those semantics; low-level types from a specific library (PortAudio, SDL, etc.) must not leak into Elixir game or Lua APIs.
+- **Optional alternate native players** — A future standalone native client (e.g. SDL + GL) would be an **optional** alternative to WebGL, not a second source of truth: it must satisfy the same contracts as the web stack.
+
 ## Project structure
 
 When Lunity is a dependency, your game's layout:
@@ -601,6 +608,10 @@ winget install Rustlang.Rustup
 ```
 
 The `.tool-versions` `system` setting works correctly on Windows since Erlang/Elixir are installed system-wide. Game controllers are detected natively via Windows Gaming Input (WGI) — no USB passthrough needed.
+
+### Editor shutdown crash (SIGSEGV)
+
+On macOS, closing the editor window can occasionally trigger a segmentation fault in `wxAppBase::ProcessIdle` (null pointer dereference). This is a known race between the wx event loop and VM shutdown. A 300ms delay before `System.stop(0)` mitigates it in most cases. If you still see crash reports when closing the editor, the application has already shut down cleanly; the crash occurs during final teardown and does not indicate data loss.
 
 ## Coordinate system
 

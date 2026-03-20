@@ -27,3 +27,7 @@ lunity-*.tar
 
 # Compiled NIF binaries (platform-specific, rebuilt by Rustler on compile).
 /priv/native/
+
+.elixir_ls/
+native/*/target/
+test.pcm

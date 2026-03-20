@@ -28,6 +28,11 @@ defmodule Lunity.Application do
           {Task,
            fn ->
              Lunity.Editor.View.run()
+             # Brief delay before System.stop to avoid wx shutdown race: the wx event loop
+             # may still process one more ProcessIdle after the window closes; if we call
+             # System.stop(0) immediately, OpenSSL/VM cleanup can race with ProcessIdle
+             # and cause a null dereference in wxAppBase::ProcessIdle (SIGSEGV).
+             Process.sleep(300)
              System.stop(0)
            end},
           Lunity.Editor.FileWatcher
