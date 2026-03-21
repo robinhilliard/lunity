@@ -271,7 +271,14 @@ defmodule Lunity.ComponentStore do
     structured =
       for {mod, opts} <- meta_entries, opts.storage == :structured, into: %{} do
         tbl = table_name(sid, mod)
-        rows = try do :ets.tab2list(tbl) rescue _ -> [] end
+
+        rows =
+          try do
+            :ets.tab2list(tbl)
+          rescue
+            _ -> []
+          end
+
         {mod, rows}
       end
 

@@ -92,7 +92,8 @@ defmodule Lunity.Editor.FileWatcher do
         state
       end
 
-    {:noreply, %{state | debounce_ref: nil, pending_recompiles: MapSet.new(), asset_changed: false}}
+    {:noreply,
+     %{state | debounce_ref: nil, pending_recompiles: MapSet.new(), asset_changed: false}}
   end
 
   # ---------------------------------------------------------------------------

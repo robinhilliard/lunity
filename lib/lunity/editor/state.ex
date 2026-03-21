@@ -547,6 +547,7 @@ defmodule Lunity.Editor.State do
       [{:inspector_dirty, true}] ->
         :ets.delete(@table, :inspector_dirty)
         true
+
       _ ->
         false
     end
@@ -691,11 +692,12 @@ defmodule Lunity.Editor.State do
               end
 
             instance_id ->
-              mode_label = case mode do
-                :watch -> "RUNNING"
-                :paused -> "PAUSED"
-                _ -> ""
-              end
+              mode_label =
+                case mode do
+                  :watch -> "RUNNING"
+                  :paused -> "PAUSED"
+                  _ -> ""
+                end
 
               "#{instance_id} #{mode_label}"
           end
@@ -727,15 +729,19 @@ defmodule Lunity.Editor.State do
   def put_watching_instance(instance_id) do
     was = get_watching_instance()
     :ets.insert(@table, {:watching_instance, instance_id})
+
     if was != instance_id do
       # Switching to a different instance (or back from scene view). Use the
       # instance's actual status so we don't show RUNNING when it's paused.
-      mode = case Lunity.Instance.get(instance_id) do
-        %{status: :paused} -> :paused
-        _ -> :watch
-      end
+      mode =
+        case Lunity.Instance.get(instance_id) do
+          %{status: :paused} -> :paused
+          _ -> :watch
+        end
+
       put_editor_mode(mode)
     end
+
     :ok
   end
 

@@ -34,7 +34,7 @@ defmodule Lunity.Editor.Inspector do
 
     sizer = :wxBoxSizer.new(@wx_vertical)
 
-    grid = :wxGrid.new(panel, -1, [style: @wx_no_border])
+    grid = :wxGrid.new(panel, -1, style: @wx_no_border)
     :wxGrid.createGrid(grid, 0, 2)
     :wxGrid.setRowLabelSize(grid, 0)
     :wxGrid.setColLabelSize(grid, 0)
@@ -124,9 +124,11 @@ defmodule Lunity.Editor.Inspector do
   defp node_prop(label, val), do: {label, format_value(val, %{})}
 
   defp prefab_entity_row(_label, nil), do: nil
+
   defp prefab_entity_row(label, val) when is_atom(val) do
     {label, inspect(val)}
   end
+
   defp prefab_entity_row(label, val) when is_binary(val), do: {label, val}
   defp prefab_entity_row(label, val), do: {label, format_value(val, %{})}
 

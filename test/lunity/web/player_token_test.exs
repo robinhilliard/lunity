@@ -19,7 +19,9 @@ defmodule Lunity.Web.PlayerTokenTest do
   end
 
   defp restore(app, key, prev) do
-    if prev == nil, do: Application.delete_env(app, key), else: Application.put_env(app, key, prev)
+    if prev == nil,
+      do: Application.delete_env(app, key),
+      else: Application.put_env(app, key, prev)
   end
 
   test "returns 404 when mint is disabled" do

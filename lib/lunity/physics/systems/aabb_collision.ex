@@ -10,7 +10,15 @@ defmodule Lunity.Physics.Systems.AABBCollision do
   use Lunity.System, type: :tensor
 
   alias Lunity.Components.Position
-  alias Lunity.Physics.Components.{Velocity, BoxCollider, CollisionLayer, CollisionMask, Restitution, Static}
+
+  alias Lunity.Physics.Components.{
+    Velocity,
+    BoxCollider,
+    CollisionLayer,
+    CollisionMask,
+    Restitution,
+    Static
+  }
 
   @spec run(%{
           position: Position.t(),

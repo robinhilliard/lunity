@@ -64,7 +64,6 @@ defmodule Lunity.Editor.HierarchyTree do
     tree
   end
 
-
   @doc """
   Rebuild the Scenes section (loaded scene + discovered modules).
   """
@@ -137,6 +136,7 @@ defmodule Lunity.Editor.HierarchyTree do
           case Lunity.Instance.get(id) do
             %{scene_module: mod, entity_ids: eids, status: status} ->
               {id, mod, eids || [], status}
+
             _ ->
               nil
           end
@@ -159,7 +159,9 @@ defmodule Lunity.Editor.HierarchyTree do
 
   defp collect_instance_items(tree, parent) do
     case :wxTreeCtrl.getChildrenCount(tree, parent, [{:recursively, false}]) do
-      0 -> []
+      0 ->
+        []
+
       _ ->
         {first, _cookie} = :wxTreeCtrl.getFirstChild(tree, parent)
         collect_siblings(tree, first, [])
@@ -169,23 +171,31 @@ defmodule Lunity.Editor.HierarchyTree do
   end
 
   defp collect_siblings(_tree, 0, acc), do: Enum.reverse(acc)
+
   defp collect_siblings(tree, item, acc) do
     entry =
       case :wxTreeCtrl.getItemData(tree, item) do
         {:game_instance, id, _mod} -> {id, item}
         _ -> nil
       end
+
     next = :wxTreeCtrl.getNextSibling(tree, item)
-    if entry, do: collect_siblings(tree, next, [entry | acc]), else: collect_siblings(tree, next, acc)
+
+    if entry,
+      do: collect_siblings(tree, next, [entry | acc]),
+      else: collect_siblings(tree, next, acc)
   rescue
     _ -> Enum.reverse(acc)
   end
 
   defp update_instance_labels(tree, existing, instances) do
     instance_map = Map.new(instances, fn {id, _mod, _eids, status} -> {id, status} end)
+
     Enum.each(existing, fn {id, item} ->
       case Map.get(instance_map, id) do
-        nil -> :ok
+        nil ->
+          :ok
+
         status ->
           label = "#{id} #{status_to_label(status)}"
           :wxTreeCtrl.setItemText(tree, item, String.to_charlist(label))
@@ -720,5 +730,4 @@ defmodule Lunity.Editor.HierarchyTree do
     |> Module.split()
     |> List.last()
   end
-
 end

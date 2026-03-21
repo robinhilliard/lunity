@@ -127,13 +127,22 @@ defmodule Mix.Tasks.Lunity.InputTest do
   end
 
   defp snap_gamepad({idx, gp}) do
-    {idx, %{
-      id: gp.id,
-      connected: gp.connected,
-      axes: Enum.map(gp.axes, &deaden/1),
-      pressed: gp.buttons |> Enum.with_index() |> Enum.filter(fn {b, _} -> b.pressed end) |> Enum.map(fn {_, i} -> i end),
-      analog: gp.buttons |> Enum.with_index() |> Enum.reject(fn {b, _} -> b.value == 0.0 end) |> Enum.map(fn {b, i} -> {i, round3(b.value)} end)
-    }}
+    {idx,
+     %{
+       id: gp.id,
+       connected: gp.connected,
+       axes: Enum.map(gp.axes, &deaden/1),
+       pressed:
+         gp.buttons
+         |> Enum.with_index()
+         |> Enum.filter(fn {b, _} -> b.pressed end)
+         |> Enum.map(fn {_, i} -> i end),
+       analog:
+         gp.buttons
+         |> Enum.with_index()
+         |> Enum.reject(fn {b, _} -> b.value == 0.0 end)
+         |> Enum.map(fn {b, i} -> {i, round3(b.value)} end)
+     }}
   end
 
   # --------------------------------------------------------------------------
@@ -145,39 +154,48 @@ defmodule Mix.Tasks.Lunity.InputTest do
   defp diff(prev, cur) do
     lines = []
 
-    lines = if prev.keys != cur.keys do
-      label = if cur.keys == [], do: "(none)", else: Enum.join(cur.keys, ", ")
-      lines ++ ["  KEYBOARD: #{label}"]
-    else
-      lines
-    end
+    lines =
+      if prev.keys != cur.keys do
+        label = if cur.keys == [], do: "(none)", else: Enum.join(cur.keys, ", ")
+        lines ++ ["  KEYBOARD: #{label}"]
+      else
+        lines
+      end
 
-    lines = if prev.mouse_pos != cur.mouse_pos do
-      {x, y} = cur.mouse_pos
-      lines ++ ["  MOUSE pos: (#{fmt(x)}, #{fmt(y)})"]
-    else
-      lines
-    end
+    lines =
+      if prev.mouse_pos != cur.mouse_pos do
+        {x, y} = cur.mouse_pos
+        lines ++ ["  MOUSE pos: (#{fmt(x)}, #{fmt(y)})"]
+      else
+        lines
+      end
 
-    lines = if prev.mouse_btns != cur.mouse_btns do
-      label = if cur.mouse_btns == [], do: "(none)", else: Enum.join(cur.mouse_btns, ", ")
-      lines ++ ["  MOUSE buttons: [#{label}]"]
-    else
-      lines
-    end
+    lines =
+      if prev.mouse_btns != cur.mouse_btns do
+        label = if cur.mouse_btns == [], do: "(none)", else: Enum.join(cur.mouse_btns, ", ")
+        lines ++ ["  MOUSE buttons: [#{label}]"]
+      else
+        lines
+      end
 
-    lines = if prev.mouse_wheel != cur.mouse_wheel do
-      lines ++ ["  MOUSE wheel: #{fmt(cur.mouse_wheel)}"]
-    else
-      lines
-    end
+    lines =
+      if prev.mouse_wheel != cur.mouse_wheel do
+        lines ++ ["  MOUSE wheel: #{fmt(cur.mouse_wheel)}"]
+      else
+        lines
+      end
 
-    lines = if prev.head_pose != cur.head_pose and cur.head_pose != nil do
-      hp = cur.head_pose
-      lines ++ ["  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"]
-    else
-      lines
-    end
+    lines =
+      if prev.head_pose != cur.head_pose and cur.head_pose != nil do
+        hp = cur.head_pose
+
+        lines ++
+          [
+            "  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"
+          ]
+      else
+        lines
+      end
 
     prev_gp = Map.new(prev.gamepads)
     cur_gp = Map.new(cur.gamepads)
@@ -211,14 +229,24 @@ defmodule Mix.Tasks.Lunity.InputTest do
 
     {x, y} = cur.mouse_pos
     btn_label = if cur.mouse_btns == [], do: "(none)", else: Enum.join(cur.mouse_btns, ", ")
-    lines = lines ++ ["  MOUSE: pos=(#{fmt(x)}, #{fmt(y)})  buttons=[#{btn_label}]  wheel=#{fmt(cur.mouse_wheel)}"]
 
-    lines = if cur.head_pose != nil and cur.head_pose.frame > 0 do
-      hp = cur.head_pose
-      lines ++ ["  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"]
-    else
-      lines ++ ["  TRACKIR: (not active)"]
-    end
+    lines =
+      lines ++
+        [
+          "  MOUSE: pos=(#{fmt(x)}, #{fmt(y)})  buttons=[#{btn_label}]  wheel=#{fmt(cur.mouse_wheel)}"
+        ]
+
+    lines =
+      if cur.head_pose != nil and cur.head_pose.frame > 0 do
+        hp = cur.head_pose
+
+        lines ++
+          [
+            "  TRACKIR: yaw=#{fmt(hp.yaw)} pitch=#{fmt(hp.pitch)} roll=#{fmt(hp.roll)} x=#{fmt(hp.x)} y=#{fmt(hp.y)} z=#{fmt(hp.z)}"
+          ]
+      else
+        lines ++ ["  TRACKIR: (not active)"]
+      end
 
     if cur.gamepads == [] do
       lines ++ ["  GAMEPADS: (none connected)"]
@@ -234,12 +262,18 @@ defmodule Mix.Tasks.Lunity.InputTest do
     header = if mode == :connected, do: "connected", else: "found"
     lines = ["  GAMEPAD #{idx}: \"#{id_label}\" (#{header})"]
 
-    lines = if gp.axes != [] do
-      axes_str = gp.axes |> Enum.with_index() |> Enum.map(fn {v, i} -> "#{i}:#{fmt(v)}" end) |> Enum.join("  ")
-      lines ++ ["    axes:    #{axes_str}"]
-    else
-      lines
-    end
+    lines =
+      if gp.axes != [] do
+        axes_str =
+          gp.axes
+          |> Enum.with_index()
+          |> Enum.map(fn {v, i} -> "#{i}:#{fmt(v)}" end)
+          |> Enum.join("  ")
+
+        lines ++ ["    axes:    #{axes_str}"]
+      else
+        lines
+      end
 
     if gp.pressed != [] do
       lines ++ ["    pressed: #{Enum.join(gp.pressed, ", ")}"]
@@ -251,25 +285,33 @@ defmodule Mix.Tasks.Lunity.InputTest do
   defp gamepad_diff_lines(idx, old, new) do
     lines = []
 
-    lines = if old.connected != new.connected do
-      lines ++ ["  GAMEPAD #{idx}: #{if new.connected, do: "connected", else: "disconnected"}"]
-    else
-      lines
-    end
+    lines =
+      if old.connected != new.connected do
+        lines ++ ["  GAMEPAD #{idx}: #{if new.connected, do: "connected", else: "disconnected"}"]
+      else
+        lines
+      end
 
-    lines = if old.axes != new.axes do
-      axes_str = new.axes |> Enum.with_index() |> Enum.map(fn {v, i} -> "#{i}:#{fmt(v)}" end) |> Enum.join("  ")
-      lines ++ ["  GAMEPAD #{idx} axes: #{axes_str}"]
-    else
-      lines
-    end
+    lines =
+      if old.axes != new.axes do
+        axes_str =
+          new.axes
+          |> Enum.with_index()
+          |> Enum.map(fn {v, i} -> "#{i}:#{fmt(v)}" end)
+          |> Enum.join("  ")
 
-    lines = if old.pressed != new.pressed do
-      label = if new.pressed == [], do: "(none)", else: Enum.join(new.pressed, ", ")
-      lines ++ ["  GAMEPAD #{idx} pressed: #{label}"]
-    else
-      lines
-    end
+        lines ++ ["  GAMEPAD #{idx} axes: #{axes_str}"]
+      else
+        lines
+      end
+
+    lines =
+      if old.pressed != new.pressed do
+        label = if new.pressed == [], do: "(none)", else: Enum.join(new.pressed, ", ")
+        lines ++ ["  GAMEPAD #{idx} pressed: #{label}"]
+      else
+        lines
+      end
 
     if old.analog != new.analog do
       analog_str = new.analog |> Enum.map(fn {i, v} -> "#{i}:#{fmt(v)}" end) |> Enum.join("  ")

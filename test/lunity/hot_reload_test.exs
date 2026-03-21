@@ -17,6 +17,7 @@ defmodule Lunity.HotReloadTest do
     on_exit(fn ->
       if @instance_id in Instance.list(), do: Instance.stop(@instance_id)
     end)
+
     :ok
   end
 
@@ -53,7 +54,12 @@ defmodule Lunity.HotReloadTest do
     [{_mod, _bin}] = Code.compile_string(@system_v1, "hot_reload_system.ex")
 
     # Start instance with our test scene and manager
-    {:ok, _pid} = Instance.start(Lunity.HotReloadTest.Scene, id: @instance_id, manager: Lunity.HotReloadTest.Manager)
+    {:ok, _pid} =
+      Instance.start(Lunity.HotReloadTest.Scene,
+        id: @instance_id,
+        manager: Lunity.HotReloadTest.Manager
+      )
+
     store_id = Instance.get(@instance_id).store_id
 
     # Run 5 ticks with v1: position should go from 0 to 0.5 on x
@@ -88,7 +94,12 @@ defmodule Lunity.HotReloadTest do
   test "paused instance uses new system code after resume" do
     [{_mod, _bin}] = Code.compile_string(@system_v1, "hot_reload_system.ex")
 
-    {:ok, _pid} = Instance.start(Lunity.HotReloadTest.Scene, id: @instance_id, manager: Lunity.HotReloadTest.Manager)
+    {:ok, _pid} =
+      Instance.start(Lunity.HotReloadTest.Scene,
+        id: @instance_id,
+        manager: Lunity.HotReloadTest.Manager
+      )
+
     store_id = Instance.get(@instance_id).store_id
 
     # Run 3 ticks, then pause

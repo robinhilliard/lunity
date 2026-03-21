@@ -199,7 +199,11 @@ defmodule Lunity.Web.PlayerMessage do
               interval_ms: interval_ms
             })
           ],
-          schedule_state_push(%{state | state_sub: %{filter: filter}, state_interval_ms: interval_ms})
+          schedule_state_push(%{
+            state
+            | state_sub: %{filter: filter},
+              state_interval_ms: interval_ms
+          })
         )
       end
     end
@@ -265,8 +269,7 @@ defmodule Lunity.Web.PlayerMessage do
     cond do
       Map.has_key?(rest, "instance_id") or Map.has_key?(rest, "entity_id") or
           Map.has_key?(rest, "spawn") ->
-        {:error, "join_forbidden",
-         "instance_id, entity_id, and spawn are assigned by the server"}
+        {:error, "join_forbidden", "instance_id, entity_id, and spawn are assigned by the server"}
 
       sorted_keys == [] ->
         :ok
@@ -384,6 +387,7 @@ defmodule Lunity.Web.PlayerMessage do
   defp coerce_entity_id(_), do: {:error, "entity_id must be a string, atom, or null"}
 
   defp normalize_spawn(nil), do: {:ok, nil}
+
   defp normalize_spawn(m) when is_map(m) do
     if map_size(m) > @max_spawn_entries do
       {:error, "spawn map too large"}

@@ -3,7 +3,7 @@ defmodule Lunity.HotReloadTest.Entity do
   use Lunity.Entity
 
   entity do
-    component Lunity.Components.Position
+    component(Lunity.Components.Position)
   end
 
   @impl Lunity.Entity

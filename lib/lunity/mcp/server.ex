@@ -505,7 +505,10 @@ defmodule Lunity.MCP.Server do
           type: "string",
           description: "Snapshot ID from instance_snapshot"
         },
-        new_id: %{type: "string", description: "ID for the new instance (auto-generated if omitted)"}
+        new_id: %{
+          type: "string",
+          description: "ID for the new instance (auto-generated if omitted)"
+        }
       },
       required: ["snapshot_id"]
     })
@@ -570,7 +573,11 @@ defmodule Lunity.MCP.Server do
           description:
             "Elixir expression that returns truthy to halt. Runs inside with_store. Example: Lunity.ComponentStore.get(Lunity.Components.Position, :ball) |> elem(0) > 20"
         },
-        max_ticks: %{type: "integer", description: "Maximum ticks before giving up", default: 10000}
+        max_ticks: %{
+          type: "integer",
+          description: "Maximum ticks before giving up",
+          default: 10000
+        }
       },
       required: ["predicate"]
     })
@@ -1207,8 +1214,12 @@ defmodule Lunity.MCP.Server do
                   key = Nx.Random.key(seed)
                   split = Nx.Random.split(key)
                   k1 = split[0]
-                  Lunity.ComponentStore.put(Lunity.Components.RandomKey, eid,
-                    Nx.to_flat_list(k1) |> List.to_tuple())
+
+                  Lunity.ComponentStore.put(
+                    Lunity.Components.RandomKey,
+                    eid,
+                    Nx.to_flat_list(k1) |> List.to_tuple()
+                  )
                 end
               end
             end

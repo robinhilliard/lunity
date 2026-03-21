@@ -173,7 +173,12 @@ defmodule Lunity.Component do
 
   defmacro __before_compile_structured__(env) do
     types = Module.get_attribute(env.module, :type) || []
-    has_t = Enum.any?(types, fn {:type, {:"::", _, [{:t, _, _} | _]}, _} -> true; _ -> false end)
+
+    has_t =
+      Enum.any?(types, fn
+        {:type, {:"::", _, [{:t, _, _} | _]}, _} -> true
+        _ -> false
+      end)
 
     unless has_t do
       raise CompileError,

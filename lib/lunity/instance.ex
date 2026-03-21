@@ -199,6 +199,7 @@ defmodule Lunity.Instance do
     {:ok, _pid} = ComponentStore.start_link(store_id, opts)
 
     {components, systems, tick_rate} = resolve_manager_config(manager)
+
     ComponentStore.with_store(store_id, fn ->
       Enum.each(components, &ComponentStore.register/1)
     end)
@@ -269,13 +270,14 @@ defmodule Lunity.Instance do
         ComponentStore.snapshot()
       end)
 
-    snap = Map.merge(snap, %{
-      scene_module: state.scene_module,
-      entity_ids: state.entity_ids,
-      systems: state.systems,
-      interval: state.interval,
-      manager: find_manager_module()
-    })
+    snap =
+      Map.merge(snap, %{
+        scene_module: state.scene_module,
+        entity_ids: state.entity_ids,
+        systems: state.systems,
+        interval: state.interval,
+        manager: find_manager_module()
+      })
 
     {:reply, snap, state}
   end
@@ -362,6 +364,7 @@ defmodule Lunity.Instance do
       dt_s =
         if dt_tensor do
           dt_s = state.interval / 1000.0
+
           ComponentStore.put_tensor(
             Lunity.Components.DeltaTime,
             Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
@@ -410,7 +413,12 @@ defmodule Lunity.Instance do
   defp resolve_manager_config(manager_module) do
     components = [Lunity.Components.DeltaTime | manager_module.components()]
     systems = manager_module.systems()
-    rate = if function_exported?(manager_module, :tick_rate, 0), do: manager_module.tick_rate(), else: 20
+
+    rate =
+      if function_exported?(manager_module, :tick_rate, 0),
+        do: manager_module.tick_rate(),
+        else: 20
+
     {components, systems, rate}
   end
 

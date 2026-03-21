@@ -33,7 +33,6 @@ defmodule Lunity.Editor.View do
   @tool_step 1003
   @tool_reset 1004
 
-
   def run(opts \\ []) do
     default_opts = [
       depth_testing: true,
@@ -55,7 +54,7 @@ defmodule Lunity.Editor.View do
     theme = Lunity.Editor.Theme.detect()
     State.put_theme(theme)
 
-    splitter = :wxSplitterWindow.new(frame, [style: @wx_sp_live_update])
+    splitter = :wxSplitterWindow.new(frame, style: @wx_sp_live_update)
     :wxSplitterWindow.setMinimumPaneSize(splitter, 100)
 
     t = State.get_theme()
@@ -167,9 +166,11 @@ defmodule Lunity.Editor.View do
     if editor_mode in [:watch, :paused], do: sync_ecs_to_scene()
     inspector_dirty = State.take_inspector_dirty()
     live_watch = editor_mode == :watch and State.get_watching_instance() != nil
+
     if inspector_dirty or (live_watch and rem(state.frame, 10) == 0) do
       Inspector.refresh()
     end
+
     state = maybe_refresh_transport_play_pause(state)
     State.put_viewport(w, h)
     state = process_capture_request(state, w, h)
@@ -500,6 +501,7 @@ defmodule Lunity.Editor.View do
       @tool_step -> handle_transport(:step)
       @tool_reset -> handle_transport(:reset)
     end
+
     refresh_transport_play_pause()
     {:ok, state}
   end
@@ -518,6 +520,7 @@ defmodule Lunity.Editor.View do
       splitter ->
         {sw, _} = :wxWindow.getClientSize(splitter)
         pos = :wxSplitterEvent.getSashPosition(evt)
+
         if sw > 0 and pos > 0 do
           State.put_inspector_width(sw - pos)
           # Refresh inspector during drag so it redraws at the new size
@@ -537,6 +540,7 @@ defmodule Lunity.Editor.View do
     case {State.get_splitter(), State.get_inspector_width()} do
       {splitter, width} when not is_nil(splitter) and not is_nil(width) ->
         {total_w, _} = :wxWindow.getClientSize(splitter)
+
         if total_w > 0 do
           sash_pos = max(100, min(total_w - 100, total_w - width))
           :wxSplitterWindow.setSashPosition(splitter, sash_pos)
@@ -557,7 +561,9 @@ defmodule Lunity.Editor.View do
 
   defp handle_transport(:play) do
     case State.get_watching_instance() do
-      nil -> :ok
+      nil ->
+        :ok
+
       id ->
         Lunity.Instance.resume(id)
         State.put_editor_mode(:watch)
@@ -568,7 +574,9 @@ defmodule Lunity.Editor.View do
 
   defp handle_transport(:pause) do
     case State.get_watching_instance() do
-      nil -> :ok
+      nil ->
+        :ok
+
       id ->
         Lunity.Instance.pause(id)
         State.put_editor_mode(:paused)
@@ -579,7 +587,9 @@ defmodule Lunity.Editor.View do
 
   defp handle_transport(:step) do
     case State.get_watching_instance() do
-      nil -> :ok
+      nil ->
+        :ok
+
       id ->
         Lunity.Instance.step(id)
         State.put_editor_mode(:paused)
@@ -654,9 +664,11 @@ defmodule Lunity.Editor.View do
   # Called from render loop: only refresh when editor_mode changes (e.g. from MCP, instance exit)
   defp maybe_refresh_transport_play_pause(nil), do: nil
   defp maybe_refresh_transport_play_pause(state) when not is_map(state), do: state
+
   defp maybe_refresh_transport_play_pause(state) do
     mode = State.get_editor_mode()
     showing_pause = mode == :watch
+
     toolbar_visible =
       State.get_watching_instance() != nil and
         State.get_editor_mode() in [:watch, :paused]
@@ -687,13 +699,18 @@ defmodule Lunity.Editor.View do
 
       %{panel: panel} ->
         :wxWindow.show(panel, [{:show, visible}])
+
         case State.get_splitter() do
-          nil -> :ok
+          nil ->
+            :ok
+
           splitter ->
             left_panel = :wxSplitterWindow.getWindow1(splitter)
+
             if left_panel != :wx.null() and left_panel != nil do
               :wxWindow.layout(left_panel)
             end
+
             case State.get_frame() do
               nil -> :ok
               frame -> :wxWindow.layout(frame)
@@ -704,7 +721,9 @@ defmodule Lunity.Editor.View do
 
   defp refresh_transport_play_pause do
     case State.get_toolbar() do
-      nil -> :ok
+      nil ->
+        :ok
+
       %{play_pause: btn} ->
         label = if State.get_editor_mode() == :watch, do: ~c"⏸", else: ~c"▶"
         :wxButton.setLabel(btn, label)
@@ -1101,11 +1120,15 @@ defmodule Lunity.Editor.View do
     case SceneLoader.load_scene(path, opts) do
       {:ok, scene, entities} ->
         State.clear_watching_instance()
+
         stored_path =
           cond do
-            is_atom(path) -> path
+            is_atom(path) ->
+              path
+
             is_binary(path) ->
-              SceneLoader.resolve_path_to_display_module(path, app: app || Lunity.project_app()) || path
+              SceneLoader.resolve_path_to_display_module(path, app: app || Lunity.project_app()) ||
+                path
           end
 
         State.set_scene(scene, stored_path, entities, :scene)

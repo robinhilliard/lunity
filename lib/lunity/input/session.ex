@@ -168,7 +168,11 @@ defmodule Lunity.Input.Session do
   @spec mouse_button(session_id(), Mouse.button(), boolean()) :: true
   def mouse_button(session_id, button, pressed) do
     [{_, m}] = :ets.lookup(@table, {session_id, :mouse})
-    :ets.insert(@table, {{session_id, :mouse}, %{m | buttons: Map.put(m.buttons, button, pressed)}})
+
+    :ets.insert(
+      @table,
+      {{session_id, :mouse}, %{m | buttons: Map.put(m.buttons, button, pressed)}}
+    )
   end
 
   @spec mouse_wheel(session_id(), float()) :: true

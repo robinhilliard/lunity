@@ -65,6 +65,7 @@ defmodule Lunity.Web.PlayerSocketTest do
 
     test "accepts when token matches" do
       Application.put_env(:lunity, :player_ws_token, "secret")
+
       assert {:ok, %{params: %{"token" => "secret"}}} =
                PlayerSocket.connect(%{params: %{"token" => "secret"}})
     end
@@ -152,7 +153,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
 
@@ -191,7 +195,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
 
@@ -248,7 +255,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         meta = Session.get_meta(sid) || %SessionMeta{}
         assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
@@ -277,7 +287,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         meta = Session.get_meta(sid) || %SessionMeta{}
         assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
@@ -286,7 +299,12 @@ defmodule Lunity.Web.PlayerSocketTest do
 
         assert {:ok, [ejson], _} =
                  PlayerMessage.handle_in(
-                   Jason.encode!(%{v: 1, t: "join", instance_id: "any", hints: %{"mode" => "solo"}}),
+                   Jason.encode!(%{
+                     v: 1,
+                     t: "join",
+                     instance_id: "any",
+                     hints: %{"mode" => "solo"}
+                   }),
                    s0
                  )
 
@@ -301,7 +319,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         meta = Session.get_meta(sid) || %SessionMeta{}
         assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
@@ -325,7 +346,10 @@ defmodule Lunity.Web.PlayerSocketTest do
 
       try do
         assert {:ok, _} =
-                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene,
+                   id: id,
+                   manager: Lunity.HotReloadTest.Manager
+                 )
 
         json = PlayerMessage.encode_state_frame(id, nil)
         assert %{"v" => 1, "t" => "state", "filter" => nil, "ecs" => ecs} = Jason.decode!(json)

@@ -88,7 +88,10 @@ defmodule Lunity.Web.ConnectionReaper do
             acc + 1
 
           age > @max_age_ms ->
-            Logger.info("ConnectionReaper: killing stale SSE process #{inspect(pid)} (age #{div(age, 1000)}s)")
+            Logger.info(
+              "ConnectionReaper: killing stale SSE process #{inspect(pid)} (age #{div(age, 1000)}s)"
+            )
+
             Process.demonitor(ref, [:flush])
             Process.exit(pid, :kill)
             :ets.delete(@ets_table, pid)
