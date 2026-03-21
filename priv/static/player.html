@@ -17,8 +17,8 @@
 </head>
 <body>
 <h1>Lunity Player (parity)</h1>
-<p class="hint">Same bootstrap as <code>mix lunity.player</code>: <code>welcome</code> → <code>hello</code> → <code>auth</code> → <code>join</code> (hints only) → <code>assigned</code>. Pass <code>token</code> and <code>jwt</code> in the query string, or use the dev form below to mint a JWT (same-origin POST).</p>
-<p class="hint">Example: <code>/player?token=…&amp;jwt=…</code> · optional <code>hints=&lt;JSON&gt;</code> · <code>auth_only=1</code> stops after <code>ack</code>.</p>
+<p class="hint">Same bootstrap as <code>mix lunity.player</code>: <code>welcome</code> → <code>hello</code> → <code>auth</code> → <code>join</code> (hints only) → <code>assigned</code>. Then <strong>subscribe_state</strong> → <strong>actions</strong> (parity). Pass <code>token</code> and <code>jwt</code> in the query string, or use the dev form below to mint a JWT (same-origin POST).</p>
+<p class="hint">Example: <code>/player?token=…&amp;jwt=…</code> · optional <code>hints=&lt;JSON&gt;</code> · <code>auth_only=1</code> stops after <code>ack</code> · <code>skip_followup=1</code> stops after <code>assigned</code> (no subscribe/actions).</p>
 <pre id="log"></pre>
 <form class="dev" id="mint-form" autocomplete="off">
   <strong>Dev mint</strong> (local only; never ship mint keys in a public URL)

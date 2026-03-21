@@ -24,7 +24,9 @@ function parseQuery() {
     userId: s.get("user_id") || "",
     playerId: s.get("player_id") || "",
     authOnly: s.get("auth_only") === "1" || s.get("auth_only") === "true",
-    hintsRaw: s.get("hints") || ""
+    hintsRaw: s.get("hints") || "",
+    skip_followup:
+      s.get("skip_followup") === "1" || s.get("skip_followup") === "true"
   };
 }
 
@@ -70,16 +72,20 @@ async function mintJwt(baseUrl, mintKey, userId, playerId) {
 }
 
 /**
- * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean }} opts
- * @returns {Promise<{ authenticated?: object, assigned?: object }>}
+ * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean }} opts
+ * @returns {Promise<object>}
  */
 function runBootstrap(opts) {
-  const { wsUrl, jwt, hints, authOnly } = opts;
+  const { wsUrl, jwt, hints, authOnly, followup = true } = opts;
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     let phase = "welcome";
     let settled = false;
+    /** @type {object | null} */
+    let lastAssigned = null;
+    /** @type {object | null} */
+    let lastSubscribeAck = null;
 
     const finish = (fn, arg) => {
       if (settled) return;
@@ -164,9 +170,51 @@ function runBootstrap(opts) {
           if (msg.t !== "assigned") {
             throw new Error(`expected assigned, got ${msg.t}`);
           }
+          lastAssigned = msg;
+          if (!followup) {
+            phase = "done";
+            ws.close();
+            finish(resolve, { assigned: msg });
+            return;
+          }
+          const sub = JSON.stringify({ v: 1, t: "subscribe_state", filter: null });
+          log(`-> ${sub}`);
+          ws.send(sub);
+          phase = "expect_subscribe_ack";
+        } else if (phase === "expect_subscribe_ack") {
+          if (msg.t === "state") {
+            log("(ignoring state before subscribe_ack)");
+            return;
+          }
+          if (msg.t !== "subscribe_ack") {
+            throw new Error(`expected subscribe_ack, got ${msg.t}`);
+          }
+          lastSubscribeAck = msg;
+          const ent = lastAssigned.entity_id != null ? String(lastAssigned.entity_id) : "paddle_left";
+          const act = JSON.stringify({
+            v: 1,
+            t: "actions",
+            frame: 1,
+            actions: [{ op: "move", entity: ent, dz: 0.25 }]
+          });
+          log(`-> ${act}`);
+          ws.send(act);
+          phase = "expect_actions_ack";
+        } else if (phase === "expect_actions_ack") {
+          if (msg.t === "state") {
+            log("(periodic state push)");
+            return;
+          }
+          if (msg.t !== "actions_ack") {
+            throw new Error(`expected actions_ack, got ${msg.t}`);
+          }
           phase = "done";
           ws.close();
-          finish(resolve, { assigned: msg });
+          finish(resolve, {
+            assigned: lastAssigned,
+            subscribeAck: lastSubscribeAck,
+            actionsAck: msg
+          });
         }
       } catch (e) {
         finish(reject, e);
@@ -208,10 +256,15 @@ async function runFromQuery() {
     wsUrl,
     jwt,
     hints,
-    authOnly: q.authOnly
+    authOnly: q.authOnly,
+    followup: !q.skip_followup
   });
 
-  if (result.assigned) {
+  if (result.assigned && result.actionsAck) {
+    log(
+      `OK parity: assigned + subscribe_ack + actions_ack (${JSON.stringify(result.actionsAck)})`
+    );
+  } else if (result.assigned) {
     log(`OK assigned: ${JSON.stringify(result.assigned)}`);
   } else if (result.authenticated) {
     log(`OK authenticated (auth_only): ${JSON.stringify(result.authenticated)}`);
@@ -245,9 +298,14 @@ function wireMintForm() {
         wsUrl,
         jwt,
         hints: null,
-        authOnly: false
+        authOnly: false,
+        followup: true
       });
-      if (result.assigned) {
+      if (result.assigned && result.actionsAck) {
+        log(
+          `OK parity: assigned + subscribe_ack + actions_ack (${JSON.stringify(result.actionsAck)})`
+        );
+      } else if (result.assigned) {
         log(`OK assigned: ${JSON.stringify(result.assigned)}`);
       }
     } catch (e) {

@@ -8,12 +8,17 @@ defmodule Lunity.Player.WsClient do
           | :expect_hello_ack
           | :expect_auth_ack
           | :expect_assigned
+          | :expect_subscribe_ack
+          | :expect_actions_ack
 
   @type t :: %{
           parent: pid,
           jwt: String.t(),
           hints: map() | nil,
           auth_only: boolean(),
+          followup: boolean(),
+          assigned_row: map() | nil,
+          subscribe_ack: map() | nil,
           phase: phase(),
           verbose: boolean(),
           done: boolean()
@@ -104,11 +109,62 @@ defmodule Lunity.Player.WsClient do
   defp dispatch_text(json, %{phase: :expect_assigned} = state) do
     case json do
       %{"t" => "assigned"} = m ->
-        notify(state, {:ok, {:in_world, m}})
-        {:close, %{state | done: true}}
+        if state.followup do
+          out = Jason.encode!(%{v: 1, t: "subscribe_state", filter: nil})
+          verbose(state, "-> #{out}")
+          {:reply, {:text, out}, %{state | phase: :expect_subscribe_ack, assigned_row: m}}
+        else
+          notify(state, {:ok, {:in_world, m}})
+          {:close, %{state | done: true}}
+        end
 
       _ ->
         notify(state, {:error, {:unexpected, :assigned_phase, json}})
+        {:close, %{state | done: true}}
+    end
+  end
+
+  defp dispatch_text(%{"t" => "state"}, %{phase: ph} = state)
+       when ph in [:expect_subscribe_ack, :expect_actions_ack] do
+    verbose(state, "<- state (ignored)")
+    {:ok, state}
+  end
+
+  defp dispatch_text(json, %{phase: :expect_subscribe_ack} = state) do
+    case json do
+      %{"t" => "subscribe_ack"} = sub ->
+        assigned = state.assigned_row || %{}
+        entity = Map.get(assigned, "entity_id") || "paddle_left"
+
+        out =
+          Jason.encode!(%{
+            v: 1,
+            t: "actions",
+            frame: 1,
+            actions: [%{"op" => "move", "entity" => to_string(entity), "dz" => 0.25}]
+          })
+
+        verbose(state, "-> #{out}")
+        {:reply, {:text, out}, %{state | phase: :expect_actions_ack, subscribe_ack: sub}}
+
+      _ ->
+        notify(state, {:error, {:unexpected, :subscribe_phase, json}})
+        {:close, %{state | done: true}}
+    end
+  end
+
+  defp dispatch_text(json, %{phase: :expect_actions_ack} = state) do
+    case json do
+      %{"t" => "actions_ack"} = ack ->
+        notify(
+          state,
+          {:ok, {:parity, state.assigned_row, state.subscribe_ack, ack}}
+        )
+
+        {:close, %{state | done: true}}
+
+      _ ->
+        notify(state, {:error, {:unexpected, :actions_ack_phase, json}})
         {:close, %{state | done: true}}
     end
   end

@@ -2,12 +2,13 @@ defmodule Lunity.Web.PlayerTranscriptTest do
   @moduledoc """
   Golden ordered transcript for the player protocol (in-process, no WebSocket).
 
-  Phase 3 uses the same shapes for EAGL/WebGL parity tests.
+  Phase 3 uses the same shapes for EAGL/WebGL parity tests (bootstrap, `subscribe_state`,
+  `actions`).
   """
   use ExUnit.Case, async: false
 
   alias Lunity.Auth.PlayerJWT
-  alias Lunity.Input.Session
+  alias Lunity.Input.{Session, SessionMeta}
   alias Lunity.Web.PlayerMessage
 
   setup do
@@ -74,5 +75,55 @@ defmodule Lunity.Web.PlayerTranscriptTest do
              )
 
     assert %{"t" => "error", "code" => "bad_actions"} = Jason.decode!(err)
+  end
+
+  test "golden transcript: subscribe_state and actions after simulated join", %{session_id: sid} do
+    s0 = base(sid)
+
+    assert {:ok, [_hello_ack], s1} = PlayerMessage.handle_in(~s({"v":1,"t":"hello"}), s0)
+    token = sign(%{"user_id" => "u_golden", "player_id" => "p_golden"})
+
+    assert {:ok, [_ack], s2} =
+             PlayerMessage.handle_in(Jason.encode!(%{v: 1, t: "auth", token: token}), s1)
+
+    assert s2.phase == :authenticated
+
+    meta = Session.get_meta(sid) || %SessionMeta{}
+
+    assert true =
+             Session.update_meta(sid, %{
+               meta
+               | instance_id: "golden_inst",
+                 entity_id: :paddle_left
+             })
+
+    s3 = Map.put(s2, :phase, :in_world)
+
+    assert {:ok, [sub_ack], s4} =
+             PlayerMessage.handle_in(
+               Jason.encode!(%{v: 1, t: "subscribe_state", filter: nil}),
+               s3
+             )
+
+    sub = Jason.decode!(sub_ack)
+    assert sub["t"] == "subscribe_ack"
+    assert sub["filter"] == nil
+    assert sub["interval_ms"] == Application.get_env(:lunity, :player_state_push_interval_ms, 100)
+    assert s4.state_sub != nil
+
+    assert {:ok, [act_ack], _s5} =
+             PlayerMessage.handle_in(
+               Jason.encode!(%{
+                 v: 1,
+                 t: "actions",
+                 frame: 42,
+                 actions: [%{"op" => "move", "entity" => "paddle_left", "dz" => 0.5}]
+               }),
+               s4
+             )
+
+    act = Jason.decode!(act_ack)
+    assert act["t"] == "actions_ack"
+    assert act["frame"] == 42
   end
 end

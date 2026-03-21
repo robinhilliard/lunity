@@ -28,6 +28,28 @@ defmodule Lunity.Web.Router do
     end
   end
 
+  get "/pong" do
+    case pong_gl_html_abs_path() do
+      {:ok, path} ->
+        case File.read(path) do
+          {:ok, html} ->
+            conn
+            |> put_resp_content_type("text/html")
+            |> send_resp(200, html)
+
+          {:error, _} ->
+            send_resp(conn, 500, "pong_gl.html read failed")
+        end
+
+      {:error, _} ->
+        send_resp(
+          conn,
+          404,
+          "pong_gl.html not found — add priv/static/pong_gl.html in the host game app"
+        )
+    end
+  end
+
   get "/player" do
     case player_html_abs_path() do
       {:ok, path} ->
@@ -72,6 +94,12 @@ defmodule Lunity.Web.Router do
       File.exists?(default) -> {:ok, default}
       true -> {:error, :not_found}
     end
+  end
+
+  defp pong_gl_html_abs_path do
+    app = Lunity.project_app()
+    game = Path.join([Lunity.priv_dir_for_app(app), "static", "pong_gl.html"])
+    if File.exists?(game), do: {:ok, game}, else: {:error, :not_found}
   end
 
   forward("/",

@@ -3,7 +3,9 @@ defmodule Mix.Tasks.Lunity.Player do
   @moduledoc """
   Connects to a running game server's `Lunity.Web.PlayerSocket` using the same
   transcript as the browser: `welcome` → `hello` → `hello_ack` → `auth` → `ack`,
-  then optionally `join` → `assigned`.
+  then `join` → `assigned`, then by default **`subscribe_state`** and **`actions`** (same as
+  `/player` in the browser). Use **`--skip-followup`** to stop after **`assigned`** (legacy
+  one-line output). **`--verbose`** logs the full transcript on stderr.
 
   ## Examples
 
@@ -27,6 +29,10 @@ defmodule Mix.Tasks.Lunity.Player do
   Auth only (no `join`), e.g. testing mint + handshake:
 
       mix lunity.player ... --auth-only
+
+  Stop after `assigned` (no subscribe/actions; stdout is the `assigned` JSON):
+
+      mix lunity.player ... --skip-followup
 
   Environment:
 
@@ -77,6 +83,9 @@ defmodule Mix.Tasks.Lunity.Player do
         jwt: jwt,
         hints: hints,
         auth_only: opts[:auth_only] == true,
+        followup: opts[:auth_only] != true and opts[:skip_followup] != true,
+        assigned_row: nil,
+        subscribe_ack: nil,
         phase: :welcome,
         verbose: opts[:verbose] == true
       }
@@ -122,6 +131,12 @@ defmodule Mix.Tasks.Lunity.Player do
   defp report_ok({:ok, {:authenticated, ack}}, opts) do
     if opts[:verbose] != true do
       IO.puts(Jason.encode!(ack))
+    end
+  end
+
+  defp report_ok({:ok, {:parity, _assigned, _sub, actions_ack}}, opts) do
+    if opts[:verbose] != true do
+      IO.puts(Jason.encode!(actions_ack))
     end
   end
 
@@ -229,6 +244,7 @@ defmodule Mix.Tasks.Lunity.Player do
           player_id: :string,
           hints: :string,
           auth_only: :boolean,
+          skip_followup: :boolean,
           verbose: :boolean,
           secure: :boolean,
           timeout: :integer
@@ -261,6 +277,7 @@ defmodule Mix.Tasks.Lunity.Player do
            player_id: opts[:player_id],
            hints: opts[:hints],
            auth_only: opts[:auth_only] == true,
+           skip_followup: opts[:skip_followup] == true,
            verbose: opts[:verbose] == true,
            secure: opts[:secure] == true,
            timeout: timeout
