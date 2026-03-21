@@ -17,6 +17,7 @@ defmodule Lunity.Player.WsClient do
           hints: map() | nil,
           auth_only: boolean(),
           followup: boolean(),
+          resume: boolean(),
           assigned_row: map() | nil,
           subscribe_ack: map() | nil,
           phase: phase(),
@@ -72,7 +73,9 @@ defmodule Lunity.Player.WsClient do
   defp dispatch_text(json, %{phase: :expect_hello_ack} = state) do
     case json do
       %{"t" => "hello_ack"} ->
-        out = Jason.encode!(%{v: 1, t: "auth", token: state.jwt})
+        auth = %{v: 1, t: "auth", token: state.jwt}
+        auth = if Map.get(state, :resume) == true, do: Map.put(auth, :resume, true), else: auth
+        out = Jason.encode!(auth)
         verbose(state, "-> auth …")
         {:reply, {:text, out}, %{state | phase: :expect_auth_ack}}
 
@@ -89,6 +92,10 @@ defmodule Lunity.Player.WsClient do
           state.auth_only == true ->
             notify(state, {:ok, {:authenticated, ack}})
             {:close, %{state | done: true}}
+
+          resumed_in_world?(ack) ->
+            assigned = resumed_assigned_row(ack)
+            resume_followup(state, assigned)
 
           true ->
             join =
@@ -167,6 +174,33 @@ defmodule Lunity.Player.WsClient do
         notify(state, {:error, {:unexpected, :actions_ack_phase, json}})
         {:close, %{state | done: true}}
     end
+  end
+
+  defp resumed_in_world?(%{"resumed" => true, "instance_id" => id})
+       when is_binary(id) and id != "",
+       do: true
+
+  defp resumed_in_world?(_), do: false
+
+  defp resumed_assigned_row(ack) do
+    %{
+      "t" => "assigned",
+      "instance_id" => ack["instance_id"],
+      "entity_id" => Map.get(ack, "entity_id"),
+      "spawn" => Map.get(ack, "spawn")
+    }
+  end
+
+  defp resume_followup(%{followup: true} = state, assigned) do
+    out = Jason.encode!(%{v: 1, t: "subscribe_state", filter: nil})
+    verbose(state, "-> #{out}")
+
+    {:reply, {:text, out}, %{state | phase: :expect_subscribe_ack, assigned_row: assigned}}
+  end
+
+  defp resume_followup(state, assigned) do
+    notify(state, {:ok, {:in_world, assigned}})
+    {:close, %{state | done: true}}
   end
 
   defp maybe_put_hints(map, nil), do: map

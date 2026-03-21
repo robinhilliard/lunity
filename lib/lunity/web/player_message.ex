@@ -3,6 +3,7 @@ defmodule Lunity.Web.PlayerMessage do
 
   alias Lunity.Auth.PlayerJWT
   alias Lunity.Input.{Session, SessionMeta}
+  alias Lunity.Player.Resume
   alias Lunity.Web.EcsState
 
   @protocol_v 1
@@ -62,29 +63,65 @@ defmodule Lunity.Web.PlayerMessage do
     )
   end
 
-  defp handle_t("auth", %{"token" => token}, state) when is_binary(token) do
+  defp handle_t("auth", %{"token" => token} = rest, state) when is_binary(token) do
     if not Map.get(state, :hello_ok, false) do
       reply_error("auth_order", "send hello before auth", state)
     else
+      resume = Map.get(rest, "resume") == true
+
       case PlayerJWT.verify_and_validate_token(token) do
         {:ok, claims} ->
           user_id = claims["user_id"]
           player_id = claims["player_id"] || user_id
           sid = state.session_id
-          meta = Session.get_meta(sid) || %SessionMeta{}
-          true = Session.update_meta(sid, %{meta | user_id: user_id, player_id: player_id})
 
-          reply_ok(
-            [
-              Jason.encode!(%{
-                v: @protocol_v,
-                t: "ack",
-                user_id: user_id,
-                player_id: player_id
-              })
-            ],
-            Map.put(state, :phase, :authenticated)
-          )
+          cond do
+            resume ->
+              case Resume.take(player_id) do
+                :none ->
+                  reply_error("resume_failed", "no pending session to resume", state)
+
+                {:ok, old_sid} ->
+                  :ok = Session.clone_from(old_sid, sid)
+                  meta = Session.get_meta(sid) || %SessionMeta{}
+
+                  true =
+                    Session.update_meta(sid, %{meta | user_id: user_id, player_id: player_id})
+
+                  meta = Session.get_meta(sid) || %SessionMeta{}
+
+                  phase =
+                    if is_binary(meta.instance_id) and meta.instance_id != "" do
+                      :in_world
+                    else
+                      :authenticated
+                    end
+
+                  ack = resume_ack_map(user_id, player_id, meta)
+
+                  reply_ok(
+                    [Jason.encode!(ack)],
+                    Map.put(state, :phase, phase)
+                  )
+              end
+
+            true ->
+              :ok = Resume.clear_pending(player_id)
+              meta = Session.get_meta(sid) || %SessionMeta{}
+              true = Session.update_meta(sid, %{meta | user_id: user_id, player_id: player_id})
+
+              reply_ok(
+                [
+                  Jason.encode!(%{
+                    v: @protocol_v,
+                    t: "ack",
+                    user_id: user_id,
+                    player_id: player_id
+                  })
+                ],
+                Map.put(state, :phase, :authenticated)
+              )
+          end
 
         {:error, reason} ->
           reply_error(
@@ -356,6 +393,26 @@ defmodule Lunity.Web.PlayerMessage do
   end
 
   defp reply_ok(frames, state), do: {:ok, frames, state}
+
+  defp resume_ack_map(user_id, player_id, %SessionMeta{} = meta) do
+    base = %{
+      v: @protocol_v,
+      t: "ack",
+      user_id: user_id,
+      player_id: player_id,
+      resumed: true
+    }
+
+    if is_binary(meta.instance_id) and meta.instance_id != "" do
+      Map.merge(base, %{
+        instance_id: meta.instance_id,
+        entity_id: entity_to_wire(meta.entity_id),
+        spawn: meta.spawn
+      })
+    else
+      base
+    end
+  end
 
   defp reply_error(code, message, state) do
     json =

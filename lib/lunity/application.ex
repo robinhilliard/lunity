@@ -44,6 +44,7 @@ defmodule Lunity.Application do
   defp base_children do
     [
       Lunity.Input.SessionManager,
+      Lunity.Player.Resume,
       {Registry, keys: :unique, name: Lunity.Instance.Registry},
       {Registry, keys: :unique, name: Lunity.ComponentStore.Registry},
       {DynamicSupervisor, name: Lunity.Instance.Supervisor, strategy: :one_for_one},

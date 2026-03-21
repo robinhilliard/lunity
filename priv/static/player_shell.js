@@ -26,7 +26,8 @@ function parseQuery() {
     authOnly: s.get("auth_only") === "1" || s.get("auth_only") === "true",
     hintsRaw: s.get("hints") || "",
     skip_followup:
-      s.get("skip_followup") === "1" || s.get("skip_followup") === "true"
+      s.get("skip_followup") === "1" || s.get("skip_followup") === "true",
+    resume: s.get("resume") === "1" || s.get("resume") === "true"
   };
 }
 
@@ -72,11 +73,11 @@ async function mintJwt(baseUrl, mintKey, userId, playerId) {
 }
 
 /**
- * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean }} opts
+ * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean, resume?: boolean }} opts
  * @returns {Promise<object>}
  */
 function runBootstrap(opts) {
-  const { wsUrl, jwt, hints, authOnly, followup = true } = opts;
+    const { wsUrl, jwt, hints, authOnly, followup = true, resume = false } = opts;
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
@@ -144,7 +145,9 @@ function runBootstrap(opts) {
           if (msg.t !== "hello_ack") {
             throw new Error(`expected hello_ack, got ${msg.t}`);
           }
-          const out = JSON.stringify({ v: 1, t: "auth", token: jwt });
+          const authObj = { v: 1, t: "auth", token: jwt };
+          if (resume) authObj.resume = true;
+          const out = JSON.stringify(authObj);
           log(`-> ${out.replace(/"token":"[^"]*"/, '"token":"…"')}`);
           ws.send(out);
           phase = "expect_auth_ack";
@@ -156,6 +159,25 @@ function runBootstrap(opts) {
             phase = "done";
             ws.close();
             finish(resolve, { authenticated: msg });
+            return;
+          }
+          if (msg.resumed && msg.instance_id) {
+            lastAssigned = {
+              t: "assigned",
+              instance_id: msg.instance_id,
+              entity_id: msg.entity_id != null ? msg.entity_id : null,
+              spawn: msg.spawn != null ? msg.spawn : null
+            };
+            if (!followup) {
+              phase = "done";
+              ws.close();
+              finish(resolve, { assigned: lastAssigned });
+              return;
+            }
+            const sub = JSON.stringify({ v: 1, t: "subscribe_state", filter: null });
+            log(`-> ${sub}`);
+            ws.send(sub);
+            phase = "expect_subscribe_ack";
             return;
           }
           const join = { v: 1, t: "join" };
@@ -257,7 +279,8 @@ async function runFromQuery() {
     jwt,
     hints,
     authOnly: q.authOnly,
-    followup: !q.skip_followup
+    followup: !q.skip_followup,
+    resume: q.resume
   });
 
   if (result.assigned && result.actionsAck) {

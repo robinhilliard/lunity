@@ -43,6 +43,33 @@ defmodule Lunity.Input.Session do
     :ok
   end
 
+  @doc """
+  Copies all rows for `old_sid` onto `new_sid` (replacing `new_sid`'s rows), then unregisters
+  `old_sid`. Used when a WebSocket reconnects under the same JWT within the grace window.
+  """
+  @spec clone_from(session_id(), session_id()) :: :ok
+  def clone_from(old_sid, new_sid) do
+    unregister(new_sid)
+    register(new_sid)
+
+    for {k, v} <- :ets.tab2list(@table) do
+      case k do
+        {^old_sid, :gamepad, i} ->
+          :ets.insert(@table, {{new_sid, :gamepad, i}, v})
+
+        {^old_sid, _} ->
+          nk = put_elem(k, 0, new_sid)
+          :ets.insert(@table, {nk, v})
+
+        _ ->
+          :ok
+      end
+    end
+
+    unregister(old_sid)
+    :ok
+  end
+
   # ---------------------------------------------------------------------------
   # Reads
   # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ defmodule Lunity.Web.PlayerSocket do
   @behaviour Phoenix.Socket.Transport
 
   alias Lunity.Input.Session
+  alias Lunity.Player.Resume
   alias Lunity.Web.{PlayerMessage}
 
   require Logger
@@ -131,7 +132,13 @@ defmodule Lunity.Web.PlayerSocket do
     _ = PlayerMessage.cancel_state_timer(state)
 
     if session_id = state[:session_id] do
-      Session.unregister(session_id)
+      case Session.get_meta(session_id) do
+        %{player_id: pid} when is_binary(pid) and pid != "" ->
+          Resume.register_disconnect(pid, session_id)
+
+        _ ->
+          Session.unregister(session_id)
+      end
     end
 
     :ok

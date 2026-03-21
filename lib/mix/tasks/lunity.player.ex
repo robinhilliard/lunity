@@ -34,6 +34,10 @@ defmodule Mix.Tasks.Lunity.Player do
 
       mix lunity.player ... --skip-followup
 
+  Reconnect within the server grace window (same JWT; sends `auth` with `resume: true`). If the
+  server **`ack`** includes **`resumed`** and **`instance_id`**, this task skips **`join`** and
+  sends **`subscribe_state`** (same as the browser shell with `resume=1`).
+
   Environment:
 
   - `PLAYER_WS_TOKEN` — used when `--token` is omitted (must match server `:player_ws_token`).
@@ -84,6 +88,7 @@ defmodule Mix.Tasks.Lunity.Player do
         hints: hints,
         auth_only: opts[:auth_only] == true,
         followup: opts[:auth_only] != true and opts[:skip_followup] != true,
+        resume: opts[:resume] == true,
         assigned_row: nil,
         subscribe_ack: nil,
         phase: :welcome,
@@ -245,6 +250,7 @@ defmodule Mix.Tasks.Lunity.Player do
           hints: :string,
           auth_only: :boolean,
           skip_followup: :boolean,
+          resume: :boolean,
           verbose: :boolean,
           secure: :boolean,
           timeout: :integer
@@ -278,6 +284,7 @@ defmodule Mix.Tasks.Lunity.Player do
            hints: opts[:hints],
            auth_only: opts[:auth_only] == true,
            skip_followup: opts[:skip_followup] == true,
+           resume: opts[:resume] == true,
            verbose: opts[:verbose] == true,
            secure: opts[:secure] == true,
            timeout: timeout

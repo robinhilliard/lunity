@@ -47,6 +47,7 @@ Two refs, two metas, one instance, different `entity_id` — paddles move indepe
 - **`Lunity.Web.PlayerSocket.connect/1`** requires query param `token` to equal `Application.get_env(:lunity, :player_ws_token)`.
 - If `:player_ws_token` is unset or empty → **reject** (fail closed).
 - Unit tests in `test/lunity/web/player_socket_test.exs` call `connect/1` directly (no browser).
+- **Reconnect:** `auth` with `resume: true` (same JWT) within `:player_reconnect_grace_ms`; resume **`ack`** can echo **`instance_id`** / **`entity_id`** / **`spawn`** so clients skip **`join`**. Full WebSocket path (Bandit + `WebSockex`) is covered in `test/lunity/web/player_socket_integration_test.exs`.
 
 **Next:** OIDC / signed tokens, pass token via query or `Sec-WebSocket-Protocol` (see Phoenix `auth_token` option), map to `user_id` / `player_id` on `SessionMeta`.
 

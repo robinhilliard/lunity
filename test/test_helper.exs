@@ -5,5 +5,6 @@ Code.require_file("support/test_prefab.ex", __DIR__)
 Code.require_file("support/hot_reload_scene.ex", __DIR__)
 Code.require_file("support/hot_reload_entity.ex", __DIR__)
 Code.require_file("support/hot_reload_manager.ex", __DIR__)
+Code.require_file("support/player_socket_integration_client.ex", __DIR__)
 
 ExUnit.start()

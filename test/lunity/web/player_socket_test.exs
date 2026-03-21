@@ -3,6 +3,7 @@ defmodule Lunity.Web.PlayerSocketTest do
 
   alias Lunity.Auth.PlayerJWT
   alias Lunity.Input.{Session, SessionMeta}
+  alias Lunity.Player.Resume
   alias Lunity.Web.{PlayerMessage, PlayerSocket}
 
   setup do
@@ -337,6 +338,160 @@ defmodule Lunity.Web.PlayerSocketTest do
       after
         if id in Lunity.Instance.list(), do: Lunity.Instance.stop(id)
       end
+    end
+  end
+
+  describe "resume auth" do
+    setup do
+      prev_join = Application.get_env(:lunity, :player_join)
+      Application.delete_env(:lunity, :player_join)
+
+      on_exit(fn ->
+        restore_env(:lunity, :player_join, prev_join)
+      end)
+
+      :ok
+    end
+
+    test "auth with resume:true clones session and sets resumed in ack" do
+      sid1 = make_ref()
+      :ok = Session.register(sid1)
+      token = sign_jwt(%{"user_id" => "u1", "player_id" => "p1"})
+
+      s0 = base_state(sid1)
+      assert {:ok, [_], s1} = PlayerMessage.handle_in(~s({"v":1,"t":"hello"}), s0)
+
+      assert {:ok, [_], _s2} =
+               PlayerMessage.handle_in(Jason.encode!(%{v: 1, t: "auth", token: token}), s1)
+
+      meta = Session.get_meta(sid1)
+      true = Session.update_meta(sid1, %{meta | instance_id: "inst-resume", entity_id: :paddle})
+
+      :ok =
+        Session.put_actions(sid1, [
+          %{"entity" => "paddle", "op" => "move", "dz" => 0.25}
+        ])
+
+      :ok = Resume.register_disconnect("p1", sid1)
+
+      sid2 = make_ref()
+      :ok = Session.register(sid2)
+      t0 = base_state(sid2)
+
+      assert {:ok, [_], t1} = PlayerMessage.handle_in(~s({"v":1,"t":"hello"}), t0)
+
+      assert {:ok, [ajson], t2} =
+               PlayerMessage.handle_in(
+                 Jason.encode!(%{v: 1, t: "auth", token: token, resume: true}),
+                 t1
+               )
+
+      ack = Jason.decode!(ajson)
+
+      assert %{
+               "t" => "ack",
+               "resumed" => true,
+               "player_id" => "p1",
+               "instance_id" => "inst-resume"
+             } = ack
+
+      assert t2.phase == :in_world
+
+      meta2 = Session.get_meta(sid2)
+      assert meta2.instance_id == "inst-resume"
+      assert meta2.entity_id == :paddle
+
+      assert Session.get_actions(sid2) == [
+               %{"entity" => "paddle", "op" => "move", "dz" => 0.25}
+             ]
+
+      assert Session.get_meta(sid1) == nil
+
+      Session.unregister(sid2)
+    end
+
+    test "auth with resume:true and no pending fails" do
+      sid = make_ref()
+      :ok = Session.register(sid)
+      token = sign_jwt(%{"user_id" => "u1", "player_id" => "p1"})
+      s0 = base_state(sid) |> Map.put(:hello_ok, true)
+
+      assert {:ok, [ejson], _} =
+               PlayerMessage.handle_in(
+                 Jason.encode!(%{v: 1, t: "auth", token: token, resume: true}),
+                 s0
+               )
+
+      assert %{"t" => "error", "code" => "resume_failed"} = Jason.decode!(ejson)
+      Session.unregister(sid)
+    end
+  end
+
+  describe "PlayerSocket.terminate/2 (disconnect path)" do
+    test "with player_id in session meta, registers Resume and leaves ETS session until grace or take" do
+      player_id = "p_term_#{System.unique_integer([:positive])}"
+      sid = make_ref()
+      :ok = Session.register(sid)
+
+      meta = Session.get_meta(sid) || %SessionMeta{}
+      true = Session.update_meta(sid, %{meta | user_id: "u", player_id: player_id})
+
+      on_exit(fn ->
+        _ = Resume.clear_pending(player_id)
+        Session.unregister(sid)
+      end)
+
+      state =
+        base_state(sid)
+        |> Map.put(:phase, :authenticated)
+        |> Map.put(:hello_ok, true)
+
+      assert :ok = PlayerSocket.terminate(:normal, state)
+
+      assert Session.get_meta(sid) != nil
+      assert {:ok, ^sid} = Resume.take(player_id)
+    end
+
+    test "without player_id, unregisters ETS session" do
+      sid = make_ref()
+      :ok = Session.register(sid)
+
+      on_exit(fn -> Session.unregister(sid) end)
+
+      state = base_state(sid)
+
+      assert :ok = PlayerSocket.terminate(:normal, state)
+
+      assert Session.get_meta(sid) == nil
+    end
+
+    test "grace timer unregisters ETS session when no resume" do
+      prev_grace = Application.get_env(:lunity, :player_reconnect_grace_ms)
+      Application.put_env(:lunity, :player_reconnect_grace_ms, 50)
+
+      player_id = "p_grace_#{System.unique_integer([:positive])}"
+      sid = make_ref()
+      :ok = Session.register(sid)
+
+      meta = Session.get_meta(sid) || %SessionMeta{}
+      true = Session.update_meta(sid, %{meta | user_id: "u", player_id: player_id})
+
+      on_exit(fn ->
+        Application.put_env(:lunity, :player_reconnect_grace_ms, prev_grace)
+        _ = Resume.clear_pending(player_id)
+        Session.unregister(sid)
+      end)
+
+      state =
+        base_state(sid)
+        |> Map.put(:phase, :authenticated)
+        |> Map.put(:hello_ok, true)
+
+      assert :ok = PlayerSocket.terminate(:normal, state)
+      assert Session.get_meta(sid) != nil
+
+      Process.sleep(120)
+      assert Session.get_meta(sid) == nil
     end
   end
 
