@@ -2,7 +2,7 @@ defmodule Lunity.Web.PlayerSocketTest do
   use ExUnit.Case, async: false
 
   alias Lunity.Auth.PlayerJWT
-  alias Lunity.Input.Session
+  alias Lunity.Input.{Session, SessionMeta}
   alias Lunity.Web.{PlayerMessage, PlayerSocket}
 
   setup do
@@ -82,10 +82,14 @@ defmodule Lunity.Web.PlayerSocketTest do
 
   describe "Phase 2 protocol (PlayerMessage)" do
     setup do
+      prev_join = Application.get_env(:lunity, :player_join)
+      Application.delete_env(:lunity, :player_join)
+
       sid = make_ref()
       :ok = Session.register(sid)
 
       on_exit(fn ->
+        restore_env(:lunity, :player_join, prev_join)
         Session.unregister(sid)
       end)
 
@@ -131,11 +135,12 @@ defmodule Lunity.Web.PlayerSocketTest do
     end
 
     test "join fails when instance does not exist", %{session_id: sid} do
+      missing_id = "missing-instance-#{System.unique_integer([:positive])}"
       s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
 
       assert {:ok, [ejson], _} =
                PlayerMessage.handle_in(
-                 Jason.encode!(%{v: 1, t: "join", instance_id: "missing-instance"}),
+                 Jason.encode!(%{v: 1, t: "join", instance_id: missing_id}),
                  s0
                )
 
@@ -222,6 +227,98 @@ defmodule Lunity.Web.PlayerSocketTest do
     end
   end
 
+  describe "join with :player_join callback" do
+    setup do
+      prev = Application.get_env(:lunity, :player_join)
+      Application.put_env(:lunity, :player_join, {Lunity.Web.PlayerJoinStub, :assign})
+
+      sid = make_ref()
+      :ok = Session.register(sid)
+
+      on_exit(fn ->
+        restore_env(:lunity, :player_join, prev)
+        Session.unregister(sid)
+      end)
+
+      {:ok, session_id: sid}
+    end
+
+    test "join without instance_id uses callback assignment", %{session_id: sid} do
+      id = "cb_instance"
+
+      try do
+        assert {:ok, _} =
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+
+        meta = Session.get_meta(sid) || %SessionMeta{}
+        assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
+
+        s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
+
+        assert {:ok, [json], s1} =
+                 PlayerMessage.handle_in(Jason.encode!(%{v: 1, t: "join"}), s0)
+
+        assert %{
+                 "t" => "assigned",
+                 "instance_id" => ^id,
+                 "entity_id" => "marker",
+                 "spawn" => nil
+               } =
+                 Jason.decode!(json)
+
+        assert s1.phase == :in_world
+      after
+        if id in Lunity.Instance.list(), do: Lunity.Instance.stop(id)
+      end
+    end
+
+    test "join with instance_id is rejected when server assigns", %{session_id: sid} do
+      id = "cb_instance"
+
+      try do
+        assert {:ok, _} =
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+
+        meta = Session.get_meta(sid) || %SessionMeta{}
+        assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
+
+        s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
+
+        assert {:ok, [ejson], _} =
+                 PlayerMessage.handle_in(
+                   Jason.encode!(%{v: 1, t: "join", instance_id: "any", hints: %{"mode" => "solo"}}),
+                   s0
+                 )
+
+        assert %{"t" => "error", "code" => "join_forbidden"} = Jason.decode!(ejson)
+      after
+        if id in Lunity.Instance.list(), do: Lunity.Instance.stop(id)
+      end
+    end
+
+    test "join passes client payload as hints", %{session_id: sid} do
+      id = "cb_instance"
+
+      try do
+        assert {:ok, _} =
+                 Lunity.Instance.start(Lunity.HotReloadTest.Scene, id: id, manager: Lunity.HotReloadTest.Manager)
+
+        meta = Session.get_meta(sid) || %SessionMeta{}
+        assert true = Session.update_meta(sid, %{meta | user_id: "u1", player_id: "p1"})
+
+        s0 = base_state(sid) |> Map.put(:hello_ok, true) |> Map.put(:phase, :authenticated)
+
+        assert {:ok, [_json], _} =
+                 PlayerMessage.handle_in(
+                   Jason.encode!(%{v: 1, t: "join", hints: %{"mode" => "solo"}}),
+                   s0
+                 )
+      after
+        if id in Lunity.Instance.list(), do: Lunity.Instance.stop(id)
+      end
+    end
+  end
+
   describe "encode_state_frame/2" do
     test "includes ecs snapshot for running instance" do
       id = "player_msg_state_test"
@@ -237,5 +334,15 @@ defmodule Lunity.Web.PlayerSocketTest do
         if id in Lunity.Instance.list(), do: Lunity.Instance.stop(id)
       end
     end
+  end
+end
+
+defmodule Lunity.Web.PlayerJoinStub do
+  @behaviour Lunity.Web.PlayerJoin
+
+  @impl true
+  def assign(%{client: client}) do
+    _ = client
+    {:ok, "cb_instance", :marker, nil}
   end
 end

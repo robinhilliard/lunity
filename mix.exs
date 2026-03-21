@@ -30,6 +30,8 @@ defmodule Lunity.MixProject do
       {:joken, "~> 2.6"},
       {:phoenix, "~> 1.7"},
       {:bandit, "~> 1.0"},
+      {:websockex, "~> 0.5"},
+      {:req, "~> 0.5"},
       {:png, "~> 0.2"},
       {:stb_image, "~> 0.6"},
       {:file_system, "~> 1.0"},

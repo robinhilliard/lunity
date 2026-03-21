@@ -13,3 +13,8 @@ config :lunity, :player_state_push_interval_ms, 100
 
 # When set, POST /api/player/token (header X-Player-Mint-Key) can mint JWTs for dev / trusted backends.
 config :lunity, :player_mint_secret, nil
+
+# Optional {module, function} — server assigns instance/entity/spawn on `join` (see `Lunity.Web.PlayerJoin`).
+config :lunity, :player_join, nil
+
+import_config "#{config_env()}.exs"

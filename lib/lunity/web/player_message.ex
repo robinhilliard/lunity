@@ -101,63 +101,16 @@ defmodule Lunity.Web.PlayerMessage do
   end
 
   defp handle_t("join", rest, state) do
-    cond do
-      state[:phase] not in [:authenticated, :in_world] ->
-        reply_error("join_denied", "authenticate first", state)
+    if state[:phase] not in [:authenticated, :in_world] do
+      reply_error("join_denied", "authenticate first", state)
+    else
+      case Application.get_env(:lunity, :player_join) do
+        {mod, fun} when is_atom(mod) and is_atom(fun) and mod != nil and fun != nil ->
+          join_with_callback(mod, fun, rest, state)
 
-      not Map.has_key?(rest, "instance_id") ->
-        reply_error("bad_join", "instance_id required", state)
-
-      true ->
-        instance_id = rest["instance_id"]
-        entity_raw = Map.get(rest, "entity_id")
-        spawn = Map.get(rest, "spawn")
-
-        if not is_binary(instance_id) do
-          reply_error("bad_join", "instance_id must be a string", state)
-        else
-          case Lunity.Instance.get(instance_id) do
-            nil ->
-              reply_error("instance_not_found", instance_id, state)
-
-            _ ->
-              case parse_entity_id(entity_raw) do
-                {:error, reason} ->
-                  reply_error("bad_join", reason, state)
-
-                {:ok, entity_id} ->
-                  case normalize_spawn(spawn) do
-                    {:error, reason} ->
-                      reply_error("bad_spawn", reason, state)
-
-                    {:ok, spawn_norm} ->
-                      sid = state.session_id
-                      meta = Session.get_meta(sid) || %SessionMeta{}
-
-                      true =
-                        Session.update_meta(sid, %{
-                          meta
-                          | instance_id: instance_id,
-                            entity_id: entity_id,
-                            spawn: spawn_norm
-                        })
-
-                      reply_ok(
-                        [
-                          Jason.encode!(%{
-                            v: @protocol_v,
-                            t: "assigned",
-                            instance_id: instance_id,
-                            entity_id: entity_to_wire(entity_id),
-                            spawn: spawn_norm
-                          })
-                        ],
-                        Map.put(state, :phase, :in_world)
-                      )
-                  end
-              end
-          end
-        end
+        _ ->
+          join_client_driven(rest, state)
+      end
     end
   end
 
@@ -267,6 +220,138 @@ defmodule Lunity.Web.PlayerMessage do
     reply_error("unknown_type", other, state)
   end
 
+  defp join_with_callback(mod, fun, rest, state) do
+    sid = state.session_id
+    meta = Session.get_meta(sid) || %SessionMeta{}
+    user_id = meta.user_id
+    player_id = meta.player_id || user_id
+
+    if not is_binary(user_id) or user_id == "" do
+      reply_error("join_denied", "authenticate first", state)
+    else
+      case validate_join_callback_client(rest) do
+        :ok ->
+          info = %{
+            session_id: sid,
+            user_id: user_id,
+            player_id: player_id || user_id,
+            client: callback_client(rest)
+          }
+
+          case apply(mod, fun, [info]) do
+            {:ok, instance_id, entity_raw, spawn} when is_binary(instance_id) ->
+              finalize_join(instance_id, entity_raw, spawn, state)
+
+            {:error, code, message} when is_binary(code) and is_binary(message) ->
+              reply_error(code, message, state)
+
+            other ->
+              reply_error(
+                "join_callback",
+                "expected {:ok, id, entity, spawn} or {:error, code, msg}, got: #{inspect(other)}",
+                state
+              )
+          end
+
+        {:error, code, message} ->
+          reply_error(code, message, state)
+      end
+    end
+  end
+
+  defp validate_join_callback_client(rest) when is_map(rest) do
+    sorted_keys = rest |> Map.keys() |> Enum.sort()
+
+    cond do
+      Map.has_key?(rest, "instance_id") or Map.has_key?(rest, "entity_id") or
+          Map.has_key?(rest, "spawn") ->
+        {:error, "join_forbidden",
+         "instance_id, entity_id, and spawn are assigned by the server"}
+
+      sorted_keys == [] ->
+        :ok
+
+      sorted_keys == ["hints"] and is_map(rest["hints"]) ->
+        :ok
+
+      sorted_keys == ["hints"] ->
+        {:error, "bad_hints", "hints must be an object"}
+
+      true ->
+        {:error, "join_forbidden", "only optional hints may be sent in join"}
+    end
+  end
+
+  defp callback_client(rest) do
+    Map.take(rest, ["hints"])
+  end
+
+  defp join_client_driven(rest, state) do
+    cond do
+      not Map.has_key?(rest, "instance_id") ->
+        reply_error("bad_join", "instance_id required", state)
+
+      true ->
+        instance_id = rest["instance_id"]
+        entity_raw = Map.get(rest, "entity_id")
+        spawn = Map.get(rest, "spawn")
+
+        if not is_binary(instance_id) do
+          reply_error("bad_join", "instance_id must be a string", state)
+        else
+          finalize_join(instance_id, entity_raw, spawn, state)
+        end
+    end
+  end
+
+  defp finalize_join(instance_id, entity_raw, spawn, state) do
+    case Lunity.Instance.get(instance_id) do
+      nil ->
+        reply_error("instance_not_found", instance_id, state)
+
+      _ ->
+        case coerce_entity_id(entity_raw) do
+          {:error, reason} ->
+            reply_error("bad_join", reason, state)
+
+          {:ok, entity_id} ->
+            case normalize_spawn(spawn) do
+              {:error, reason} ->
+                reply_error("bad_spawn", reason, state)
+
+              {:ok, spawn_norm} ->
+                commit_join(instance_id, entity_id, spawn_norm, state)
+            end
+        end
+    end
+  end
+
+  defp commit_join(instance_id, entity_id, spawn_norm, state) do
+    sid = state.session_id
+    meta = Session.get_meta(sid) || %SessionMeta{}
+
+    true =
+      Session.update_meta(sid, %{
+        meta
+        | instance_id: instance_id,
+          entity_id: entity_id,
+          spawn: spawn_norm
+      })
+
+    reply_ok(
+      [
+        Jason.encode!(%{
+          v: @protocol_v,
+          t: "assigned",
+          instance_id: instance_id,
+          entity_id: entity_to_wire(entity_id),
+          spawn: spawn_norm
+        })
+      ],
+      Map.put(state, :phase, :in_world)
+    )
+  end
+
   defp reply_ok(frames, state), do: {:ok, frames, state}
 
   defp reply_error(code, message, state) do
@@ -292,6 +377,11 @@ defmodule Lunity.Web.PlayerMessage do
   end
 
   defp parse_entity_id(_), do: {:error, "entity_id must be a string"}
+
+  defp coerce_entity_id(nil), do: {:ok, nil}
+  defp coerce_entity_id(id) when is_atom(id), do: {:ok, id}
+  defp coerce_entity_id(s) when is_binary(s), do: parse_entity_id(s)
+  defp coerce_entity_id(_), do: {:error, "entity_id must be a string, atom, or null"}
 
   defp normalize_spawn(nil), do: {:ok, nil}
   defp normalize_spawn(m) when is_map(m) do

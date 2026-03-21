@@ -1,0 +1,270 @@
+defmodule Mix.Tasks.Lunity.Player do
+  @shortdoc "Headless Player WebSocket client (bootstrap → auth → optional join)"
+  @moduledoc """
+  Connects to a running game server's `Lunity.Web.PlayerSocket` using the same
+  transcript as the browser: `welcome` → `hello` → `hello_ack` → `auth` → `ack`,
+  then optionally `join` → `assigned`.
+
+  ## Examples
+
+  With a JWT (e.g. from your auth layer):
+
+      mix lunity.player --url http://127.0.0.1:4111 --token \"$PLAYER_WS_TOKEN\" --jwt \"$JWT\"
+
+  Mint a dev JWT via `POST /api/player/token` (requires `:player_mint_secret` on the server):
+
+      mix lunity.player --url http://127.0.0.1:4111 --token \"$PLAYER_WS_TOKEN\" \\
+        --mint-key \"$MINT_KEY\" --user-id u1 --player-id p1
+
+  After **`auth`**, this task sends **`join`** with **only** optional **`hints`** — the game
+  assigns `instance_id` / `entity_id` / `spawn` via `config :lunity, :player_join` (not via CLI).
+  The **server** must have been started from a Mix project that sets that (e.g. run
+  `mix lunity.edit` from your **game** repo, not from `lunity` alone — otherwise the
+  endpoint uses client-driven join and you get `bad_join` / `instance_id required`).
+
+      mix lunity.player ... --hints '{"queue":"ranked"}'
+
+  Auth only (no `join`), e.g. testing mint + handshake:
+
+      mix lunity.player ... --auth-only
+
+  Environment:
+
+  - `PLAYER_WS_TOKEN` — used when `--token` is omitted (must match server `:player_ws_token`).
+
+  This task loads config and starts only **Req + WebSockex** (and their deps). It does **not**
+  run `app.start`, so from a game project it will not boot the host application (no wx/EAGL,
+  no `Pong.Application`, no TrackIR NIF load noise from a full Lunity start).
+  """
+  use Mix.Task
+
+  alias Lunity.Player.{WsClient, WsUrl}
+
+  @impl Mix.Task
+  def run(argv) do
+    _ = Mix.Task.run("app.config")
+    _ = Mix.Task.run("compile")
+
+    {:ok, _} = Application.ensure_all_started(:req)
+    {:ok, _} = Application.ensure_all_started(:websockex)
+
+    case parse(argv) do
+      {:error, msg} ->
+        Mix.shell().error(msg)
+        exit({:shutdown, 1})
+
+      {:ok, opts} ->
+        case run_client(opts) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Mix.shell().error(format_error(reason))
+            exit({:shutdown, 1})
+        end
+    end
+  end
+
+  defp run_client(opts) do
+    with {:ok, ws_token} <- ws_token(opts),
+         {:ok, ws_url} <- WsUrl.from_base_url(opts.url, ws_token),
+         {:ok, jwt} <- resolve_jwt(opts),
+         {:ok, hints} <- parse_hints(opts[:hints]) do
+      parent = self()
+
+      ws_state = %{
+        parent: parent,
+        jwt: jwt,
+        hints: hints,
+        auth_only: opts[:auth_only] == true,
+        phase: :welcome,
+        verbose: opts[:verbose] == true
+      }
+
+      insecure = opts[:secure] != true
+
+      case WsClient.start_link(ws_url, ws_state, insecure: insecure) do
+        {:ok, pid} ->
+          ref = Process.monitor(pid)
+
+          receive do
+            {:lunity_player, {:ok, _} = ok} ->
+              _ = flush_down(ref)
+              report_ok(ok, opts)
+              :ok
+
+            {:lunity_player, {:error, e}} ->
+              _ = flush_down(ref)
+              {:error, e}
+
+            {:DOWN, ^ref, :process, _, reason} ->
+              {:error, {:ws_down, reason}}
+          after
+            opts[:timeout] ->
+              Process.exit(pid, :kill)
+              {:error, :timeout}
+          end
+
+        {:error, reason} ->
+          {:error, {:ws_start, reason}}
+      end
+    end
+  end
+
+  defp flush_down(ref) do
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      0 -> :ok
+    end
+  end
+
+  defp report_ok({:ok, {:authenticated, ack}}, opts) do
+    if opts[:verbose] != true do
+      IO.puts(Jason.encode!(ack))
+    end
+  end
+
+  defp report_ok({:ok, {:in_world, m}}, opts) do
+    if opts[:verbose] != true do
+      IO.puts(Jason.encode!(m))
+    end
+  end
+
+  defp report_ok(_, _), do: :ok
+
+  defp ws_token(opts) do
+    case opts[:token] || System.get_env("PLAYER_WS_TOKEN") do
+      t when is_binary(t) and t != "" -> {:ok, t}
+      _ -> {:error, "Missing --token or PLAYER_WS_TOKEN"}
+    end
+  end
+
+  defp resolve_jwt(%{jwt: jwt}) when is_binary(jwt) and jwt != "", do: {:ok, jwt}
+
+  defp resolve_jwt(%{mint_key: key, url: base, user_id: uid} = opts)
+       when is_binary(key) and key != "" and is_binary(uid) and uid != "" do
+    player_id = opts[:player_id] || uid
+    mint_jwt(String.trim_trailing(base, "/"), key, uid, player_id, opts[:verbose] == true)
+  end
+
+  defp resolve_jwt(%{mint_key: key}) when is_binary(key) and key != "",
+    do: {:error, "Mint requires --user-id"}
+
+  defp resolve_jwt(_), do: {:error, "Provide --jwt or (--mint-key and --user-id)"}
+
+  defp mint_jwt(base, mint_key, user_id, player_id, verbose) do
+    url = base <> "/api/player/token"
+
+    req =
+      Req.new(
+        url: url,
+        method: :post,
+        json: %{user_id: user_id, player_id: player_id},
+        headers: %{"x-player-mint-key" => mint_key}
+      )
+
+    if verbose, do: IO.puts(:stderr, "[lunity.player] POST #{url}")
+
+    case Req.request(req) do
+      {:ok, %{status: 200, body: %{"token" => t}}} when is_binary(t) ->
+        {:ok, t}
+
+      {:ok, %{status: st, body: body}} ->
+        {:error, {:mint_failed, st, body}}
+
+      {:error, e} ->
+        {:error, {:mint_req, e}}
+    end
+  end
+
+  defp parse_hints(nil), do: {:ok, nil}
+
+  defp parse_hints(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> {:ok, map}
+      {:ok, other} -> {:error, "hints must be a JSON object, got: #{inspect(other)}"}
+      {:error, _} -> {:error, "invalid JSON for --hints"}
+    end
+  end
+
+  defp format_error(msg) when is_binary(msg), do: msg
+
+  defp format_error(:bad_scheme),
+    do: "Invalid --url scheme (use http, https, ws, or wss)"
+
+  defp format_error(:bad_host), do: "Invalid --url (missing host)"
+  defp format_error(:bad_ws_token), do: "WebSocket token is empty"
+
+  defp format_error({:disconnect, reason}), do: "Disconnected: #{inspect(reason)}"
+  defp format_error({:ws_down, reason}), do: "WebSocket process exited: #{inspect(reason)}"
+  defp format_error({:ws_start, reason}), do: "Failed to start client: #{inspect(reason)}"
+  defp format_error({:mint_failed, st, body}), do: "Mint HTTP #{st}: #{inspect(body)}"
+  defp format_error({:mint_req, e}), do: "Mint request failed: #{inspect(e)}"
+  defp format_error(:timeout), do: "Timed out waiting for server"
+
+  defp format_error(%{"code" => "bad_join", "message" => "instance_id required"} = err) do
+    """
+    #{inspect(err)}
+
+    Hint: the Player WebSocket server is using client-driven join (`player_join` not set for
+    that process). Start the HTTP endpoint from your **game** Mix project so `config` sets
+    `player_join` — e.g. `cd /path/to/lunity-pong && mix lunity.edit` (not `mix lunity.edit`
+    from the `lunity` repo only).
+    """
+    |> String.trim()
+  end
+
+  defp format_error(other), do: inspect(other)
+
+  defp parse(argv) do
+    {opts, _rest, invalid} =
+      OptionParser.parse(argv,
+        strict: [
+          url: :string,
+          token: :string,
+          jwt: :string,
+          mint_key: :string,
+          user_id: :string,
+          player_id: :string,
+          hints: :string,
+          auth_only: :boolean,
+          verbose: :boolean,
+          secure: :boolean,
+          timeout: :integer
+        ],
+        aliases: [
+          u: :url,
+          t: :token,
+          j: :jwt,
+          v: :verbose
+        ]
+      )
+
+    cond do
+      invalid != [] ->
+        {:error, "Unknown or invalid flags: #{inspect(invalid)}"}
+
+      opts[:url] in [nil, ""] ->
+        {:error, "Required: --url http(s)://host:port"}
+
+      true ->
+        timeout = Keyword.get(opts, :timeout, 15_000)
+
+        {:ok,
+         %{
+           url: opts[:url],
+           token: opts[:token],
+           jwt: opts[:jwt],
+           mint_key: opts[:mint_key],
+           user_id: opts[:user_id],
+           player_id: opts[:player_id],
+           hints: opts[:hints],
+           auth_only: opts[:auth_only] == true,
+           verbose: opts[:verbose] == true,
+           secure: opts[:secure] == true,
+           timeout: timeout
+         }}
+    end
+  end
+end

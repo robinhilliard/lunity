@@ -25,7 +25,9 @@ Game clients connect over WebSockets with a **small versioned JSON** envelope on
 2. **`welcome`** — Server pushes `{ "v": 1, "t": "welcome", "protocol": 1 }`.
 3. **`hello`** → **`hello_ack`** — Capability / version handshake.
 4. **`auth`** — `{ "token": "<JWT>" }` → **`ack`** with `user_id` and `player_id`, or **`error`**. JWTs are HS256 and validated by [`Lunity.Auth.PlayerJWT`](lib/lunity/auth/player_jwt.ex) (claims `user_id`, optional `player_id`).
-5. **`join`** — `{ "instance_id": "...", "entity_id": "...", "spawn": { ... } }` → **`assigned`** or **`error`**. `spawn` is game-defined (e.g. named lobby slot or coordinates).
+5. **`join`** → **`assigned`** or **`error`**.
+   - **Client-driven** (only when `config :lunity, :player_join` is **unset**): `{ "instance_id": "...", "entity_id": "...", "spawn": { ... } }` — client must name an existing instance; `spawn` is game-defined.
+   - **Server-assigned** (`config :lunity, :player_join, {MyApp.PlayerJoin, :assign}`): body must be `{}` or `{ "hints": { ... } }` only. Top-level **`instance_id`**, **`entity_id`**, and **`spawn`** are **rejected** (anti-cheat). The callback returns authoritative assignment — see [`Lunity.Web.PlayerJoin`](lib/lunity/web/player_join.ex).
 6. **`actions`** — Semantic input: `{ "frame": <int>, "actions": [ { "entity", "op", ... } ] }` → **`actions_ack`**. Mods read these via `lunity.input.actions_for_entity/1` in Lua.
 7. Optional **`subscribe_state`** — `{ "filter": null }` for **full ECS** snapshot in periodic **`state`** messages; `filter` is reserved for future spatial / component subsetting. **`unsubscribe_state`** stops pushes.
 
@@ -42,7 +44,7 @@ Legacy ping: `{ "type": "ping" }` is still accepted and answered with **`pong`**
 
 When `:player_mint_secret` is set, `POST /api/player/token` with header `X-Player-Mint-Key` and JSON body `{ "user_id": "...", "player_id": "..." }` returns `{ "token": "<JWT>" }` signed with `:player_jwt_secret`. **Disable in production** or protect behind your own gateway. OAuth flows should mint this JWT (or a session that yields it) from your Phoenix web pipeline—not from game clients holding long-lived mint keys.
 
-**Configuration (`config/config.exs`)**
+**Configuration (`config/config.exs`, per-env under `config/dev.exs` / `config/prod.exs`)**
 
 | Key | Meaning |
 |-----|---------|
@@ -50,13 +52,16 @@ When `:player_mint_secret` is set, `POST /api/player/token` with header `X-Playe
 | `:player_jwt_secret` | HS256 secret for player JWTs used in `auth`. |
 | `:player_mint_secret` | Optional; enables `POST /api/player/token`. |
 | `:player_state_push_interval_ms` | Interval for `subscribe_state` **`state`** pushes (default `100`). |
+| `:player_join` | Optional `{module, function}` — server assigns instance/entity/spawn on **`join`** (omit `instance_id` from the client). |
+
+**Development defaults** — In this repo, `config/dev.exs` sets non-nil placeholders (`dev_player_ws_token`, `dev_player_jwt_secret`, `dev_player_mint_key`) so a local HTTP endpoint can accept `PlayerSocket` and mint. **`MIX_ENV=test` keeps `nil` from `config.exs`** (tests use `Application.put_env`). Game apps (e.g. **lunity-pong**) should mirror the same `:lunity` keys in **their** `config/dev.exs` when you run the server from that project.
 
 ### Phase 3 — client parity (next)
 
 **Where the two clients live**
 
 - **WebGL (browser)** — The **game app’s Phoenix** serves the player shell (static assets + a minimal page/route). For example, **lunity-pong** runs the server and **hosts** the WebGL client; Lunity defines the **protocol and shared expectations**, not necessarily the HTML entrypoint for every game.
-- **Elixir desktop** — Implemented **in Lunity**: a small **desktop** process that takes the **game server base URL** on the **command line** (and dev-only flags for tokens/JWT as needed), opens a WebSocket to `/ws/player`, and runs the same bootstrap as the browser. It can start **headless** (transcript / parity) and later attach to **wx + EAGL** for real input and rendering.
+- **Elixir desktop** — Implemented **in Lunity**: a small **desktop** process that takes the **game server base URL** on the **command line** (and dev-only flags for tokens/JWT as needed), opens a WebSocket to `/ws/player`, and runs the same bootstrap as the browser. It can start **headless** (transcript / parity) and later attach to **wx + EAGL** for real input and rendering. **Headless CLI:** `mix lunity.player` (see `mix help lunity.player`) connects with [WebSockex](https://hex.pm/packages/websockex), performs `welcome` → `hello` → `auth` → `join` (hints only; no instance override), prints `ack` / `assigned`, or **`--auth-only`** for handshake testing without `join`. **Important:** `mix lunity.edit` (which serves port 4111) must be run from the **game** Mix project when you rely on `config :lunity, :player_join`; running it from the `lunity` repo alone leaves `player_join` unset, so `mix lunity.player` fails with `instance_id required`.
 
 **Why duplicate “browser” work on the desktop**
 
