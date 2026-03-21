@@ -74,10 +74,10 @@ async function mintJwt(baseUrl, mintKey, userId, playerId) {
 
 /**
  * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean, resume?: boolean }} opts
- * @returns {Promise<object>}
+ * @returns {Promise<object>} Resolves with `assigned` / `subscribeAck` / `actionsAck`; `fromResume` is true when the resume branch skipped `join`.
  */
 function runBootstrap(opts) {
-    const { wsUrl, jwt, hints, authOnly, followup = true, resume = false } = opts;
+  const { wsUrl, jwt, hints, authOnly, followup = true, resume = false } = opts;
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
@@ -87,6 +87,8 @@ function runBootstrap(opts) {
     let lastAssigned = null;
     /** @type {object | null} */
     let lastSubscribeAck = null;
+    /** Whether we took the resume branch (skip join). */
+    let fromResume = false;
 
     const finish = (fn, arg) => {
       if (settled) return;
@@ -162,16 +164,18 @@ function runBootstrap(opts) {
             return;
           }
           if (msg.resumed && msg.instance_id) {
+            fromResume = true;
             lastAssigned = {
               t: "assigned",
               instance_id: msg.instance_id,
               entity_id: msg.entity_id != null ? msg.entity_id : null,
               spawn: msg.spawn != null ? msg.spawn : null
             };
+            log("(resume) skip join — ack carried instance_id; subscribe_state …");
             if (!followup) {
               phase = "done";
               ws.close();
-              finish(resolve, { assigned: lastAssigned });
+              finish(resolve, { assigned: lastAssigned, fromResume: true });
               return;
             }
             const sub = JSON.stringify({ v: 1, t: "subscribe_state", filter: null });
@@ -235,7 +239,8 @@ function runBootstrap(opts) {
           finish(resolve, {
             assigned: lastAssigned,
             subscribeAck: lastSubscribeAck,
-            actionsAck: msg
+            actionsAck: msg,
+            fromResume
           });
         }
       } catch (e) {
@@ -284,8 +289,9 @@ async function runFromQuery() {
   });
 
   if (result.assigned && result.actionsAck) {
+    const label = result.fromResume ? "parity (resume)" : "parity";
     log(
-      `OK parity: assigned + subscribe_ack + actions_ack (${JSON.stringify(result.actionsAck)})`
+      `OK ${label}: assigned + subscribe_ack + actions_ack (${JSON.stringify(result.actionsAck)})`
     );
   } else if (result.assigned) {
     log(`OK assigned: ${JSON.stringify(result.assigned)}`);

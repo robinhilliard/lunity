@@ -71,8 +71,8 @@ The native client will **reimplement** many things the browser bundles for free 
 
 **Parity work**
 
-- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs); extend these with the same JSON lines you expect from desktop and WebGL shells.
-- **Desktop / WebGL** — Both follow the same ordered bootstrap (`welcome` → `hello` → `auth` → …) and message shapes; frame timing may differ, **transcript** should match.
+- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs) (bootstrap, `subscribe_state`, **`auth` + `resume`**, `resume_failed`). Real WebSocket coverage: [`test/lunity/web/player_socket_integration_test.exs`](test/lunity/web/player_socket_integration_test.exs). Extend transcripts with the same JSON lines you expect from desktop and WebGL shells.
+- **Desktop / WebGL** — `mix lunity.player` and `/player` (`player_shell.js`) mirror the same bootstrap; with **`--resume`** / **`resume=1`**, both skip **`join`** when the server **`ack`** includes **`resumed`** and **`instance_id`**. Frame timing may differ; **transcript** should match.
 
 ## Design goals
 

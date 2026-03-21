@@ -192,6 +192,7 @@ defmodule Lunity.Player.WsClient do
   end
 
   defp resume_followup(%{followup: true} = state, assigned) do
+    verbose(state, "-> resume: skip join (ack had instance_id), subscribe_state …")
     out = Jason.encode!(%{v: 1, t: "subscribe_state", filter: nil})
     verbose(state, "-> #{out}")
 
