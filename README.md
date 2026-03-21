@@ -53,8 +53,19 @@ When `:player_mint_secret` is set, `POST /api/player/token` with header `X-Playe
 
 ### Phase 3 — client parity (next)
 
-- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs); extend these with the same JSON lines you expect from EAGL and WebGL shells.
-- **EAGL / WebGL** — Native and browser clients should follow the same ordered bootstrap (`welcome` → `hello` → `auth` → …) and message shapes; pixel timing may differ, **transcript** should match.
+**Where the two clients live**
+
+- **WebGL (browser)** — The **game app’s Phoenix** serves the player shell (static assets + a minimal page/route). For example, **lunity-pong** runs the server and **hosts** the WebGL client; Lunity defines the **protocol and shared expectations**, not necessarily the HTML entrypoint for every game.
+- **Elixir desktop** — Implemented **in Lunity**: a small **desktop** process that takes the **game server base URL** on the **command line** (and dev-only flags for tokens/JWT as needed), opens a WebSocket to `/ws/player`, and runs the same bootstrap as the browser. It can start **headless** (transcript / parity) and later attach to **wx + EAGL** for real input and rendering.
+
+**Why duplicate “browser” work on the desktop**
+
+The native client will **reimplement** many things the browser bundles for free (WebSocket ergonomics, timing, input, audio, GL context lifecycle). That overlap is **intentional**: the **multi-platform promise** is one **frozen wire protocol** and shared **engine contracts**, with **multiple shells**—not one shell pretending to be the only client.
+
+**Parity work**
+
+- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs); extend these with the same JSON lines you expect from desktop and WebGL shells.
+- **Desktop / WebGL** — Both follow the same ordered bootstrap (`welcome` → `hello` → `auth` → …) and message shapes; frame timing may differ, **transcript** should match.
 
 ## Design goals
 
