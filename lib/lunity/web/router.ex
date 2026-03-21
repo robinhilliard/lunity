@@ -28,6 +28,24 @@ defmodule Lunity.Web.Router do
     end
   end
 
+  get "/player" do
+    case player_html_abs_path() do
+      {:ok, path} ->
+        case File.read(path) do
+          {:ok, html} ->
+            conn
+            |> put_resp_content_type("text/html")
+            |> send_resp(200, html)
+
+          {:error, _} ->
+            send_resp(conn, 500, "player.html read failed")
+        end
+
+      {:error, _} ->
+        send_resp(conn, 404, "player.html not found")
+    end
+  end
+
   get "/assets/prefabs/:name" do
     app = Lunity.project_app()
     priv_dir = Lunity.priv_dir_for_app(app)
@@ -41,6 +59,18 @@ defmodule Lunity.Web.Router do
       |> send_file(200, glb_path)
     else
       send_resp(conn, 404, "Prefab not found: #{glb_name}")
+    end
+  end
+
+  defp player_html_abs_path do
+    app = Lunity.project_app()
+    game = Path.join([Lunity.priv_dir_for_app(app), "static", "player.html"])
+    default = Application.app_dir(:lunity, "priv/static/player.html")
+
+    cond do
+      File.exists?(game) -> {:ok, game}
+      File.exists?(default) -> {:ok, default}
+      true -> {:error, :not_found}
     end
   end
 

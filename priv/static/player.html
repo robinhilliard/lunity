@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunity Player</title>
+<style>
+  body { font-family: ui-monospace, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; margin: 16px; line-height: 1.4; }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 8px 0; }
+  .hint { color: #8b949e; font-size: 13px; margin-bottom: 12px; max-width: 56rem; }
+  pre#log { white-space: pre-wrap; word-break: break-all; font-size: 12px; border: 1px solid #30363d; padding: 12px; min-height: 160px; background: #161b22; }
+  form.dev { margin: 12px 0; padding: 12px; border: 1px solid #30363d; max-width: 520px; background: #161b22; }
+  form.dev label { display: block; margin: 8px 0 2px; font-size: 12px; color: #8b949e; }
+  form.dev input { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; }
+  form.dev button { margin-top: 10px; padding: 6px 12px; font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Lunity Player (parity)</h1>
+<p class="hint">Same bootstrap as <code>mix lunity.player</code>: <code>welcome</code> → <code>hello</code> → <code>auth</code> → <code>join</code> (hints only) → <code>assigned</code>. Pass <code>token</code> and <code>jwt</code> in the query string, or use the dev form below to mint a JWT (same-origin POST).</p>
+<p class="hint">Example: <code>/player?token=…&amp;jwt=…</code> · optional <code>hints=&lt;JSON&gt;</code> · <code>auth_only=1</code> stops after <code>ack</code>.</p>
+<pre id="log"></pre>
+<form class="dev" id="mint-form" autocomplete="off">
+  <strong>Dev mint</strong> (local only; never ship mint keys in a public URL)
+  <label for="mint-key">X-Player-Mint-Key</label>
+  <input id="mint-key" name="mint_key" type="password" placeholder="dev_player_mint_key">
+  <label for="user-id">user_id</label>
+  <input id="user-id" name="user_id" type="text" value="u1">
+  <label for="user-token">player_ws_token (query param <code>token</code>)</label>
+  <input id="user-token" name="token" type="text" placeholder="dev_player_ws_token">
+  <button type="submit">Mint JWT &amp; connect</button>
+</form>
+<script type="module" src="/static/player_shell.js"></script>
+</body>
+</html>
