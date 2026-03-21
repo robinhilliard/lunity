@@ -11,6 +11,51 @@ Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DS
 
 **Phase 0 (player session spikes S0–S6):** [docs/phase0_findings.md](docs/phase0_findings.md).
 
+## Player WebSocket protocol (`/ws/player`)
+
+Game clients connect over WebSockets with a **small versioned JSON** envelope on each message:
+
+```json
+{ "v": 1, "t": "<message_type>", ... }
+```
+
+**Bootstrap sequence**
+
+1. **Connect** — Handshake auth (see below).
+2. **`welcome`** — Server pushes `{ "v": 1, "t": "welcome", "protocol": 1 }`.
+3. **`hello`** → **`hello_ack`** — Capability / version handshake.
+4. **`auth`** — `{ "token": "<JWT>" }` → **`ack`** with `user_id` and `player_id`, or **`error`**. JWTs are HS256 and validated by [`Lunity.Auth.PlayerJWT`](lib/lunity/auth/player_jwt.ex) (claims `user_id`, optional `player_id`).
+5. **`join`** — `{ "instance_id": "...", "entity_id": "...", "spawn": { ... } }` → **`assigned`** or **`error`**. `spawn` is game-defined (e.g. named lobby slot or coordinates).
+6. **`actions`** — Semantic input: `{ "frame": <int>, "actions": [ { "entity", "op", ... } ] }` → **`actions_ack`**. Mods read these via `lunity.input.actions_for_entity/1` in Lua.
+7. Optional **`subscribe_state`** — `{ "filter": null }` for **full ECS** snapshot in periodic **`state`** messages; `filter` is reserved for future spatial / component subsetting. **`unsubscribe_state`** stops pushes.
+
+Legacy ping: `{ "type": "ping" }` is still accepted and answered with **`pong`**.
+
+**Handshake auth (connect)**
+
+| Mechanism | Purpose |
+|-----------|---------|
+| Query string | `GET /ws/player/websocket?token=<shared_secret>` — must match `:player_ws_token` (fail closed if unset). |
+| `Sec-WebSocket-Protocol` | If the endpoint enables Phoenix `auth_token: true`, a token may be sent per [Phoenix WebSocket auth](https://hexdocs.pm/phoenix/Phoenix.Endpoint.html#socket/3-websocket-configuration); it is exposed as `connect_info[:auth_token]` and accepted as an alternative to `?token=`. |
+
+**Minting JWTs (dev / trusted backend)**
+
+When `:player_mint_secret` is set, `POST /api/player/token` with header `X-Player-Mint-Key` and JSON body `{ "user_id": "...", "player_id": "..." }` returns `{ "token": "<JWT>" }` signed with `:player_jwt_secret`. **Disable in production** or protect behind your own gateway. OAuth flows should mint this JWT (or a session that yields it) from your Phoenix web pipeline—not from game clients holding long-lived mint keys.
+
+**Configuration (`config/config.exs`)**
+
+| Key | Meaning |
+|-----|---------|
+| `:player_ws_token` | Shared secret for WebSocket upgrade (required for connections unless you rely solely on subprotocol token + matching config). |
+| `:player_jwt_secret` | HS256 secret for player JWTs used in `auth`. |
+| `:player_mint_secret` | Optional; enables `POST /api/player/token`. |
+| `:player_state_push_interval_ms` | Interval for `subscribe_state` **`state`** pushes (default `100`). |
+
+### Phase 3 — client parity (next)
+
+- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs); extend these with the same JSON lines you expect from EAGL and WebGL shells.
+- **EAGL / WebGL** — Native and browser clients should follow the same ordered bootstrap (`welcome` → `hello` → `auth` → …) and message shapes; pixel timing may differ, **transcript** should match.
+
 ## Design goals
 
 - **BEAM + wx for engine and editor** — The simulation and authoring environment run on the **BEAM**. The editor uses **wxWidgets** and OpenGL (eagl) for the viewport; it is not driven by a separate native shell such as SDL for authoring.

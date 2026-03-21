@@ -7,7 +7,10 @@ defmodule Lunity.Web.Endpoint do
   )
 
   socket("/ws/player", Lunity.Web.PlayerSocket,
-    websocket: true,
+    websocket: [
+      auth_token: true,
+      connect_info: [:uri, :auth_token]
+    ],
     longpoll: false
   )
 

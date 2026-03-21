@@ -5,8 +5,9 @@ defmodule Lunity.Web.PlayerSocket do
 
   ## Connect (Phase 0)
 
-  Query param `token` must match `Application.get_env(:lunity, :player_ws_token)`.
-  If unset or empty, connections are **rejected** (fail closed).
+  Handshake token must match `Application.get_env(:lunity, :player_ws_token)` (fail closed if unset).
+  Accept **either** query param `?token=` **or** Phoenix WebSocket `auth_token` (see endpoint
+  `auth_token: true` — token from `Sec-WebSocket-Protocol` / `connect_info[:auth_token]`).
 
   ## Protocol (Phase 2)
 
@@ -26,8 +27,10 @@ defmodule Lunity.Web.PlayerSocket do
   def child_spec(_opts), do: :ignore
 
   @impl true
-  def connect(%{params: params} = config) do
-    token = params["token"]
+  def connect(config) do
+    params = Map.get(config, :params, %{})
+    connect_info = Map.get(config, :connect_info, %{})
+    token = params["token"] || Map.get(connect_info, :auth_token)
     expected = Application.get_env(:lunity, :player_ws_token)
 
     cond do

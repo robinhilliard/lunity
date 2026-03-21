@@ -10,3 +10,6 @@ config :lunity, :player_jwt_secret, nil
 
 # Interval for `subscribe_state` pushes (ms).
 config :lunity, :player_state_push_interval_ms, 100
+
+# When set, POST /api/player/token (header X-Player-Mint-Key) can mint JWTs for dev / trusted backends.
+config :lunity, :player_mint_secret, nil

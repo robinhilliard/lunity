@@ -68,6 +68,16 @@ defmodule Lunity.Web.PlayerSocketTest do
       assert {:ok, %{params: %{"token" => "secret"}}} =
                PlayerSocket.connect(%{params: %{"token" => "secret"}})
     end
+
+    test "accepts token from connect_info auth_token when query is empty" do
+      Application.put_env(:lunity, :player_ws_token, "secret")
+
+      assert {:ok, %{params: %{}, connect_info: %{auth_token: "secret"}}} =
+               PlayerSocket.connect(%{
+                 params: %{},
+                 connect_info: %{auth_token: "secret"}
+               })
+    end
   end
 
   describe "Phase 2 protocol (PlayerMessage)" do

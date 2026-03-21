@@ -1,8 +1,18 @@
 defmodule Lunity.Web.Router do
   use Plug.Router
 
+  plug(Plug.Parsers,
+    parsers: [:json],
+    pass: ["*/*"],
+    json_decoder: Jason
+  )
+
   plug(:match)
   plug(:dispatch)
+
+  post "/api/player/token" do
+    Lunity.Web.PlayerToken.call(conn, [])
+  end
 
   get "/viewer" do
     viewer_path = Application.app_dir(:lunity, "priv/static/viewer.html")
