@@ -6,6 +6,11 @@ defmodule Lunity.Web.Endpoint do
     longpoll: false
   )
 
+  socket("/ws/player", Lunity.Web.PlayerSocket,
+    websocket: true,
+    longpoll: false
+  )
+
   plug(Plug.Static,
     at: "/static",
     from: {:lunity, "priv/static"}

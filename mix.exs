@@ -27,6 +27,7 @@ defmodule Lunity.MixProject do
       {:nx, "~> 0.9"},
       {:ex_mcp, "~> 0.7"},
       {:jason, "~> 1.4"},
+      {:joken, "~> 2.6"},
       {:phoenix, "~> 1.7"},
       {:bandit, "~> 1.0"},
       {:png, "~> 0.2"},

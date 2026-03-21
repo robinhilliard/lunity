@@ -71,23 +71,24 @@ defmodule Lunity.Mod.RuntimeStage do
 
     entity_get_func = fn [entity_id, property], lua_st ->
       val = Lunity.Mod.RuntimeAPI.entity_get(entity_id, property)
-      {[val], lua_st}
+      return_encoded(val, lua_st)
     end
 
     entity_set_func = fn [entity_id, property, value], lua_st ->
-      Lunity.Mod.RuntimeAPI.entity_set(entity_id, property, value)
+      decoded = :luerl.decode(value, lua_st)
+      Lunity.Mod.RuntimeAPI.entity_set(entity_id, property, decoded)
       {[], lua_st}
     end
 
     entity_find_func = fn [entity_name], lua_st ->
       val = Lunity.Mod.RuntimeAPI.entity_find(entity_name)
-      {[val], lua_st}
+      return_encoded(val, lua_st)
     end
 
     entity_spawn_func = fn [entity_name | rest], lua_st ->
       overrides = List.first(rest)
       val = Lunity.Mod.RuntimeAPI.entity_spawn(entity_name, overrides)
-      {[val], lua_st}
+      return_encoded(val, lua_st)
     end
 
     entity_destroy_func = fn [entity_id], lua_st ->
@@ -97,7 +98,7 @@ defmodule Lunity.Mod.RuntimeStage do
 
     scene_get_node_func = fn [name], lua_st ->
       val = Lunity.Mod.RuntimeAPI.scene_get_node(name)
-      {[val], lua_st}
+      return_encoded(val, lua_st)
     end
 
     scene_set_node_position_func = fn [name, x, y, z], lua_st ->
@@ -106,8 +107,22 @@ defmodule Lunity.Mod.RuntimeStage do
     end
 
     input_is_key_down_func = fn [key], lua_st ->
-      val = Lunity.Mod.RuntimeAPI.input_is_key_down(key)
-      {[val], lua_st}
+      val = Lunity.Mod.RuntimeAPI.input_is_key_down(to_string(key))
+      return_encoded(val, lua_st)
+    end
+
+    # Fixed arity so :luerl.encode/2 accepts the Erlang fun (variadic `fn args, ...` breaks encode).
+    input_is_key_down_for_entity_func = fn [key, entity_id], lua_st ->
+      k = to_string(key)
+      eid = entity_id_to_lua_string(entity_id)
+      val = Lunity.Mod.RuntimeAPI.input_is_key_down_for_entity(k, eid)
+      return_encoded(val, lua_st)
+    end
+
+    input_actions_for_entity_func = fn [entity_id], lua_st ->
+      eid = entity_id_to_lua_string(entity_id)
+      val = Lunity.Mod.RuntimeAPI.input_actions_for_entity(eid)
+      return_encoded(val, lua_st)
     end
 
     init_lua = """
@@ -135,5 +150,23 @@ defmodule Lunity.Mod.RuntimeStage do
     |> Sandbox.set_nested(["lunity", "scene", "get_node"], scene_get_node_func)
     |> Sandbox.set_nested(["lunity", "scene", "set_node_position"], scene_set_node_position_func)
     |> Sandbox.set_nested(["lunity", "input", "is_key_down"], input_is_key_down_func)
+    |> Sandbox.set_nested(
+      ["lunity", "input", "is_key_down_for_entity"],
+      input_is_key_down_for_entity_func
+    )
+    |> Sandbox.set_nested(
+      ["lunity", "input", "actions_for_entity"],
+      input_actions_for_entity_func
+    )
   end
+
+  # Erlang funs must return luerldata; raw lists/maps are not Lua tables (see luerl_emul:call_erlfunc/5).
+  defp return_encoded(val, lua_st) do
+    {enc, st} = :luerl.encode(val, lua_st)
+    {[enc], st}
+  end
+
+  defp entity_id_to_lua_string(id) when is_binary(id), do: id
+  defp entity_id_to_lua_string(id) when is_atom(id), do: Atom.to_string(id)
+  defp entity_id_to_lua_string(id), do: to_string(id)
 end

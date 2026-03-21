@@ -41,9 +41,12 @@ defmodule Lunity.Mod.Sandbox do
   def set_nested(st, keys, value) when is_function(value) do
     {enc_val, st} = :luerl.encode(value, st)
 
-    case :luerl.set_table_keys(st, keys, enc_val) do
-      {:ok, _, new_st} -> new_st
-      new_st -> new_st
+    case :luerl.set_table_keys(keys, enc_val, st) do
+      {:ok, new_st} ->
+        new_st
+
+      {:lua_error, e, _} ->
+        raise "luerl.set_table_keys: #{inspect(e)}"
     end
   end
 

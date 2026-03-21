@@ -9,6 +9,8 @@
 
 Game engine and editor utilities for EAGL. Provides scene, entity, and prefab DSLs, an Nx-backed component system with tensor and structured storage, game instance management, a Lua mod system for data-driven content and runtime scripting, file watching for auto-reload, and MCP tooling for agent-driven development.
 
+**Phase 0 (player session spikes S0–S6):** [docs/phase0_findings.md](docs/phase0_findings.md).
+
 ## Design goals
 
 - **BEAM + wx for engine and editor** — The simulation and authoring environment run on the **BEAM**. The editor uses **wxWidgets** and OpenGL (eagl) for the viewport; it is not driven by a separate native shell such as SDL for authoring.

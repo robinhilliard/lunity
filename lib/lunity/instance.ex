@@ -305,9 +305,11 @@ defmodule Lunity.Instance do
       cond do
         state.status == :running ->
           TickRunner.tick(state.systems)
+          Lunity.Mod.GameInput.dispatch_tick(state.store_id, dt_s)
 
         state.status == :paused and Map.get(state, :step_pending, false) ->
           TickRunner.tick(state.systems)
+          Lunity.Mod.GameInput.dispatch_tick(state.store_id, dt_s)
 
         true ->
           :ok
@@ -357,15 +359,21 @@ defmodule Lunity.Instance do
     ComponentStore.with_store(state.store_id, fn ->
       dt_tensor = ComponentStore.get_tensor(Lunity.Components.DeltaTime)
 
-      if dt_tensor do
-        dt_s = state.interval / 1000.0
-        ComponentStore.put_tensor(
-          Lunity.Components.DeltaTime,
-          Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
-        )
-      end
+      dt_s =
+        if dt_tensor do
+          dt_s = state.interval / 1000.0
+          ComponentStore.put_tensor(
+            Lunity.Components.DeltaTime,
+            Nx.broadcast(Nx.tensor(dt_s, type: :f32), Nx.shape(dt_tensor))
+          )
+
+          dt_s
+        else
+          state.interval / 1000.0
+        end
 
       TickRunner.tick(state.systems)
+      Lunity.Mod.GameInput.dispatch_tick(state.store_id, dt_s)
     end)
 
     new_count = count + 1

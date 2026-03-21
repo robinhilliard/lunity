@@ -29,11 +29,13 @@ defmodule Lunity.Mod.EventBus do
   @doc """
   Dispatch an event to all registered handlers.
 
-  Returns `:ok`. Handler errors are logged but don't stop dispatch.
+  Returns `:ok` after handlers finish. Uses a synchronous `call` so gameplay ticks
+  (`on_tick`) apply ECS/input updates before the instance continues the frame.
   """
   @spec dispatch(String.t(), map()) :: :ok
   def dispatch(event_name, payload \\ %{}) do
-    GenServer.cast(__MODULE__, {:dispatch, event_name, payload})
+    timeout = Application.get_env(:lunity, :mod_dispatch_timeout, 60_000)
+    GenServer.call(__MODULE__, {:dispatch, event_name, payload}, timeout)
   end
 
   @doc """
@@ -67,7 +69,16 @@ defmodule Lunity.Mod.EventBus do
     {:noreply, %{state | handlers: Map.put(handlers, event_name, updated)}}
   end
 
-  def handle_cast({:dispatch, event_name, payload}, state) do
+  def handle_cast({:set_runtime, mod_name, lua_state}, state) do
+    {:noreply, %{state | runtime_states: Map.put(state.runtime_states, mod_name, lua_state)}}
+  end
+
+  def handle_cast(:clear, _state) do
+    {:noreply, %{handlers: %{}, runtime_states: %{}}}
+  end
+
+  @impl true
+  def handle_call({:dispatch, event_name, payload}, _from, state) do
     handlers = Map.get(state.handlers, event_name, [])
 
     runtime_states =
@@ -91,18 +102,9 @@ defmodule Lunity.Mod.EventBus do
         end
       end)
 
-    {:noreply, %{state | runtime_states: runtime_states}}
+    {:reply, :ok, %{state | runtime_states: runtime_states}}
   end
 
-  def handle_cast({:set_runtime, mod_name, lua_state}, state) do
-    {:noreply, %{state | runtime_states: Map.put(state.runtime_states, mod_name, lua_state)}}
-  end
-
-  def handle_cast(:clear, _state) do
-    {:noreply, %{handlers: %{}, runtime_states: %{}}}
-  end
-
-  @impl true
   def handle_call({:handlers, event_name}, _from, state) do
     {:reply, Map.get(state.handlers, event_name, []), state}
   end
@@ -117,14 +119,33 @@ defmodule Lunity.Mod.EventBus do
   defp call_handler_safe(lua_st, func_ref, payload) do
     timeout = Application.get_env(:lunity, :mod_handler_timeout, 5_000)
 
+    store_id = Map.get(payload, :store_id) || Map.get(payload, "store_id")
+    dt = Map.get(payload, :dt) || Map.get(payload, "dt")
+
     task =
       Task.async(fn ->
-        payload_table = payload_to_lua(payload)
+        if store_id do
+          sessions = build_sessions_by_entity(to_string(store_id))
 
-        case :luerl.call_function(lua_st, func_ref, [payload_table]) do
-          {:ok, _results, new_st} -> {:ok, new_st}
-          {_results, new_st} when is_tuple(new_st) -> {:ok, new_st}
-          error -> {:error, error}
+          Process.put(:lunity_mod_tick, %{
+            store_id: to_string(store_id),
+            dt: (dt || 0.0) * 1.0,
+            sessions_by_entity: sessions
+          })
+        end
+
+        try do
+          # luerl:call_function(Func, Args, St) — not (St, Func, Args).
+          # Args must be encoded luerldata (e.g. one Lua table for the event payload).
+          {encoded_args, st1} = :luerl.encode_list([payload], lua_st)
+
+          case :luerl.call_function(func_ref, encoded_args, st1) do
+            {:ok, _results, new_st} -> {:ok, new_st}
+            {_results, new_st} when is_tuple(new_st) -> {:ok, new_st}
+            error -> {:error, error}
+          end
+        after
+          if store_id, do: Process.delete(:lunity_mod_tick)
         end
       end)
 
@@ -138,21 +159,17 @@ defmodule Lunity.Mod.EventBus do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  defp payload_to_lua(payload) when is_map(payload) do
-    Enum.map(payload, fn {k, v} -> {to_string(k), lua_value(v)} end)
+  defp build_sessions_by_entity(store_id) do
+    Lunity.Input.Session.all_sessions()
+    |> Enum.reduce(%{}, fn {sid, meta}, acc ->
+      if meta.instance_id == store_id && meta.entity_id do
+        Map.put(acc, entity_key_string(meta.entity_id), sid)
+      else
+        acc
+      end
+    end)
   end
 
-  defp payload_to_lua(payload) when is_list(payload), do: payload
-
-  defp lua_value(v) when is_number(v), do: v * 1.0
-  defp lua_value(v) when is_binary(v), do: v
-  defp lua_value(v) when is_boolean(v), do: v
-  defp lua_value(nil), do: nil
-  defp lua_value(v) when is_atom(v), do: Atom.to_string(v)
-  defp lua_value(v) when is_map(v), do: payload_to_lua(v)
-
-  defp lua_value(v) when is_list(v),
-    do: Enum.with_index(v, 1) |> Enum.map(fn {e, i} -> {i * 1.0, lua_value(e)} end)
-
-  defp lua_value(v), do: inspect(v)
+  defp entity_key_string(id) when is_atom(id), do: Atom.to_string(id)
+  defp entity_key_string(id) when is_binary(id), do: id
 end

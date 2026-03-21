@@ -12,6 +12,7 @@ defmodule Lunity.Input.Session do
       {session_id, :mouse}           => Mouse.t()
       {session_id, :gamepad, index}  => Gamepad.t()
       {session_id, :head_pose}       => HeadPose.t()
+      {session_id, :actions}         => [map()]
       {session_id, :meta}            => SessionMeta.t()
   """
 
@@ -30,6 +31,7 @@ defmodule Lunity.Input.Session do
     :ets.insert(@table, {{session_id, :keyboard}, %Keyboard{}})
     :ets.insert(@table, {{session_id, :mouse}, %Mouse{}})
     :ets.insert(@table, {{session_id, :head_pose}, %HeadPose{}})
+    :ets.insert(@table, {{session_id, :actions}, []})
     :ets.insert(@table, {{session_id, :meta}, meta})
     :ok
   end
@@ -90,6 +92,36 @@ defmodule Lunity.Input.Session do
       [{_, meta}] -> meta
       [] -> nil
     end
+  end
+
+  @doc """
+  Semantic game actions for this input session (latest `actions` message replaces the frame).
+  Read during mod `on_tick`; cleared after the tick via `clear_actions_for_instance/1`.
+  """
+  @spec get_actions(session_id()) :: [map()]
+  def get_actions(session_id) do
+    case :ets.lookup(@table, {session_id, :actions}) do
+      [{_, list}] when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  @spec put_actions(session_id(), [map()]) :: :ok
+  def put_actions(session_id, actions) when is_list(actions) do
+    :ets.insert(@table, {{session_id, :actions}, actions})
+    :ok
+  end
+
+  @doc """
+  Clears action lists for every session bound to `instance_id` after mods have consumed them.
+  """
+  @spec clear_actions_for_instance(String.t()) :: :ok
+  def clear_actions_for_instance(instance_id) when is_binary(instance_id) do
+    for {sid, meta} <- all_sessions(), meta.instance_id == instance_id do
+      :ets.insert(@table, {{sid, :actions}, []})
+    end
+
+    :ok
   end
 
   # ---------------------------------------------------------------------------
