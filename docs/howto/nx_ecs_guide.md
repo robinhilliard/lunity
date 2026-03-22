@@ -118,34 +118,42 @@ response from pushing them. This is a fundamental consequence of the
 column-oriented model: if a system reads a component, every entity in the
 store has a row for it (empty slots have zeros and a presence mask of 0).
 
+### Why Lunity uses dense tensors (the GPU-first bet)
+
 This is different from most ECS frameworks. In an archetype-based ECS like
 Bevy, entities with different component sets live in separate storage tables.
 A query for `(Position, Velocity, BoxCollider)` would only match entities
-that have all three. A wall with only `(Position, BoxCollider)` would not
-appear -- no placeholder velocity needed. Lunity trades this flexibility for
-the ability to process all entities in a single tensor operation (and,
-potentially, on a GPU via Nx backends like EXLA).
+that have all three -- no placeholder velocity needed.
 
-### How this scales -- and the gather/scatter workaround
+Lunity uses dense tensors deliberately. The architecture targets
+GPU-accelerated ECS for massively multiplayer games. Every `defn` system is
+a function that Nx can compile to native code today and to GPU kernels (via
+EXLA/CUDA backends) in the future. Dense, contiguous tensors are the natural
+representation for GPU computation -- the same code that runs on the CPU now
+will run on a GPU with a backend change, no system rewrites needed.
 
-Dense tensors work well when most entities share the same component set. In
+The trade-off is that entities which don't need a component still occupy a
+row (filled with zeros). For games where most entities share the same
+component set, this is negligible. For games with highly heterogeneous
+entities, the `filter` option (described in Part 9) lets systems operate on
+compact subsets without abandoning the tensor-first architecture.
+
+### How this scales
+
+Dense tensors work best when most entities share the same component set. In
 Pong, all 6 entities have roughly the same components, so the tensors are
 nearly full. But imagine a game with 10,000 entities where only 100 have
 velocity -- `Nx.multiply` would run on a `{10000, 3}` tensor to move 100
 things, wasting 99% of the work on zeros.
 
-Lunity's `SweptAABBCollision` system already contains the workaround: it
-reads the presence mask, gathers only the active rows into compact tensors,
-runs the collision math on those, then scatters the results back. If 6 out
-of 128 entities have colliders, the N-squared collision runs on 6x6 instead
-of 128x128. This is essentially a manual version of what an archetype ECS
-does automatically -- you can apply the same pattern in your own systems
-when the entity count grows.
+For **linear** systems (addition, multiplication), this waste is acceptable
+-- the operations are fast and the GPU will handle them at scale. The
+`Nx.select` masking approach (compute for everyone, keep the old value for
+non-matching entities) is the right tool here.
 
-For most games that Lunity targets (tens to low thousands of entities with
-similar component sets), the dense tensor model is efficient and simple. It
-is not suited for open-world games with tens of thousands of heterogeneous
-objects.
+For **superlinear** systems (N-squared collision detection), reducing N
+matters enormously. Lunity provides the `filter` option to compact tensors
+before the system runs -- see Part 9.
 
 ---
 
@@ -502,7 +510,109 @@ This is the foundation of the AABB collision system.
 
 ---
 
-## Part 10: `defn` vs `def` -- when to use which
+## Part 10: Filtering with `filter:` -- compact tensors for expensive systems
+
+For systems with superlinear cost (like N-squared collision detection),
+processing the full tensor is wasteful when most entities don't participate.
+The `filter` option tells the TickRunner to automatically compact the input
+tensors to only the active entities before calling your system, and scatter
+the results back afterward.
+
+### Declaring a filter
+
+Add `filter:` to your system's `use` line:
+
+```elixir
+use Lunity.System, type: :tensor, filter: BoxCollider
+```
+
+You can also filter on multiple components (entities must have ALL of them):
+
+```elixir
+use Lunity.System, type: :tensor, filter: [BoxCollider, Velocity]
+```
+
+### What your system receives
+
+With `filter: BoxCollider` and 6 entities that have colliders out of 128
+total slots, your `run/1` receives compact `{6, ...}` tensors instead of
+`{128, ...}`:
+
+```
+Without filter:                      With filter:
+  position: {128, 3}                   position: {6, 3}
+  velocity: {128, 3}                   velocity: {6, 3}
+  box_collider: {128, 3}              box_collider: {6, 3}
+  delta_time: {128}                    delta_time: {6}
+
+  N-squared collision: 128x128        N-squared collision: 6x6
+  = 16,384 pairs                      = 36 pairs (455x less)
+```
+
+Your system code doesn't change -- it still operates on tensors, just
+smaller ones. The gather/scatter is handled by the framework.
+
+### How it works under the hood
+
+The TickRunner does three things when `filter` is set:
+
+1. **Active indices** -- looks up which entities have presence for the
+   filter component(s). This is cached across ticks and only recomputed
+   when entities are added or removed.
+
+2. **Gather** -- calls `Nx.take(tensor, indices)` for each input component
+   to build compact tensors with only the active rows.
+
+3. **Scatter** -- after your system returns, calls `Nx.indexed_put` (one
+   batched call per output component) to write the compact results back
+   into the full-capacity tensors.
+
+### Example: SweptAABBCollision
+
+The collision system uses `filter: BoxCollider` to operate on only the
+entities that have colliders:
+
+```elixir
+defmodule Lunity.Physics.Systems.SweptAABBCollision do
+  use Lunity.System, type: :tensor,
+    filter: Lunity.Physics.Components.BoxCollider
+
+  # run/1 receives pre-compacted tensors -- no manual
+  # gather/scatter needed
+  def run(inputs) do
+    m = Nx.axis_size(inputs.position, 0)
+    dt = Nx.reshape(inputs.delta_time, {:auto, 1})
+    scaled_vel = Nx.multiply(inputs.velocity, dt)
+
+    compact_inputs = %{
+      position: inputs.position,
+      velocity: scaled_vel,
+      # ... other components ...
+      presence: Nx.broadcast(Nx.tensor(1, type: :u8), {m})
+    }
+
+    contacts = SweptAABB.detect(compact_inputs)
+    result = SweptAABB.resolve_reflect(compact_inputs, contacts)
+
+    safe_dt = Nx.max(dt, Nx.tensor(1.0e-6, type: :f32))
+    %{position: result.position, velocity: Nx.divide(result.velocity, safe_dt)}
+  end
+end
+```
+
+### When to use `filter:` vs `Nx.select` masking
+
+| Approach | Best for | Cost |
+|----------|----------|------|
+| `Nx.select` masking | Linear systems (addition, multiplication) | Processes all N rows but wasted work is cheap |
+| `filter:` | Superlinear systems (N-squared collision, complex per-entity logic) | Gather/scatter overhead, but inner computation on m << N is much cheaper |
+
+**Rule of thumb:** If your system is O(N) or simpler, use `Nx.select`. If
+it is O(N squared) or involves expensive per-entity branching, use `filter:`.
+
+---
+
+## Part 11: `defn` vs `def` -- when to use which
 
 ### `defn` (numerical definition)
 
@@ -546,6 +656,11 @@ backend), but it is fine for rare events like scoring.
 **Rule of thumb:** Use `defn` when processing all entities uniformly. Use
 `def` when you need to branch on a specific entity's value or do rare
 event handling.
+
+The `filter:` option (Part 10) works with both `defn` and `def` systems.
+The gather/scatter happens in the TickRunner before and after your function
+is called, so your `run/1` receives compact tensors regardless of whether
+it is a numerical definition or a regular function.
 
 ---
 
@@ -601,7 +716,7 @@ what they do:
 | `t[i]` | `pos[5]` | Get row at index i |
 | `t[i][j]` | `pos[5][2]` | Get element at row i, column j |
 | `t[[.., n]]` | `pos[[.., 0]]` | Get column n across all rows |
-| `Nx.take(t, indices)` | `Nx.take(pos, Nx.tensor([1,2,5]))` | Gather specific rows by index |
+| `Nx.take(t, indices)` | `Nx.take(pos, Nx.tensor([1,2,5]))` | Gather specific rows by index (used by `filter:` gather) |
 | `Nx.slice(t, start, len)` | `Nx.slice(t, [i, 0], [1, 3])` | Extract a rectangular sub-tensor |
 | `Nx.indexed_put(t, idx, val)` | `Nx.indexed_put(pos, [[5]], row)` | Replace rows at given indices |
 
@@ -649,3 +764,8 @@ what they do:
 6. **Use `entities: [:name]` for lookups.** When you need one specific
    entity's data, declare it in the system options and use the `_idx` input
    rather than searching.
+
+7. **Use `filter:` for expensive systems.** If your system does O(N squared)
+   work (collision, pathfinding) or processes only a small subset of
+   entities, add `filter: SomeComponent` to automatically compact the
+   tensors. For simple linear systems, `Nx.select` masking is faster.

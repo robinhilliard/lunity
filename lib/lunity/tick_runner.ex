@@ -10,6 +10,7 @@ defmodule Lunity.TickRunner do
   """
 
   alias Lunity.{ComponentStore, System}
+  alias Lunity.ComponentStore.Gather
 
   @doc "Runs all systems in order."
   def tick(systems) do
@@ -38,8 +39,34 @@ defmodule Lunity.TickRunner do
     entity_names = Map.get(opts, :entities, [])
     inputs = resolve_entity_indices(inputs, entity_names)
 
-    outputs = system_module.run(inputs)
+    filter = Map.get(opts, :filter)
 
+    if filter do
+      run_filtered_tensor_system(system_module, opts, inputs, filter)
+    else
+      run_full_tensor_system(system_module, opts, inputs)
+    end
+  end
+
+  defp run_full_tensor_system(system_module, opts, inputs) do
+    outputs = system_module.run(inputs)
+    write_outputs(opts, outputs)
+  end
+
+  defp run_filtered_tensor_system(system_module, opts, inputs, filter) do
+    indices = Gather.active_indices(filter)
+
+    if indices == [] do
+      :ok
+    else
+      compact_inputs = Gather.gather(inputs, indices)
+      compact_outputs = system_module.run(compact_inputs)
+      full_outputs = Gather.scatter(inputs, compact_outputs, indices)
+      write_outputs(opts, full_outputs)
+    end
+  end
+
+  defp write_outputs(opts, outputs) do
     for component <- opts.writes do
       key = System.component_key(component)
 

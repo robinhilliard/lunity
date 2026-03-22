@@ -75,6 +75,16 @@ writes the returned tensors back.
 The `TickRunner` iterates entities that have the primary read component
 and calls `run/2` for each, skipping entities where any input is `nil`.
 
+**Filtered tensor systems** add `filter: ComponentModule` (or a list of
+modules) to operate on a compact subset of entities. The TickRunner
+automatically gathers only the rows where the filter component(s) have
+presence, runs the system on the smaller tensors, and scatters the results
+back. This is essential for superlinear systems like collision detection
+where reducing N from 128 to 6 avoids 128x128 = 16,384 pair checks. The
+dense tensor architecture is a deliberate choice targeting GPU-accelerated
+ECS via Nx backends (EXLA/CUDA); the filter option handles the sparse cases
+without abandoning that architecture.
+
 ### Manager
 
 The game defines a single Manager module (e.g. `Pong.Manager`) that

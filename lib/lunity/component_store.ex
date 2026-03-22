@@ -401,6 +401,7 @@ defmodule Lunity.ComponentStore do
 
     :ets.insert(registry_table(sid), {entity_id, index})
     :ets.insert(reverse_registry(sid), {index, entity_id})
+    Lunity.ComponentStore.Gather.invalidate_cache(sid)
     {:reply, index, state}
   end
 
@@ -423,6 +424,7 @@ defmodule Lunity.ComponentStore do
         :ets.delete(registry_table(sid), entity_id)
         :ets.delete(reverse_registry(sid), index)
         zero_tensor_index(index, sid)
+        Lunity.ComponentStore.Gather.invalidate_cache(sid)
         {:reply, :ok, %{state | free_indices: [index | state.free_indices]}}
 
       [] ->
@@ -607,6 +609,7 @@ defmodule Lunity.ComponentStore do
         val = if present, do: 1, else: 0
         new_mask = Nx.indexed_put(mask, Nx.tensor([index]), Nx.tensor(val, type: :u8))
         :ets.insert(tensor_table(store_id), {{component_module, :presence}, new_mask})
+        Lunity.ComponentStore.Gather.invalidate_cache(store_id)
 
       [] ->
         :ok

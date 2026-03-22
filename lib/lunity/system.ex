@@ -52,11 +52,19 @@ defmodule Lunity.System do
 
     entities = Keyword.get(opts, :entities, [])
 
+    filter =
+      case Keyword.get(opts, :filter) do
+        nil -> nil
+        list when is_list(list) -> list
+        single -> [single]
+      end
+
     quote do
       @behaviour Lunity.System
       @before_compile Lunity.System
       @lunity_system_type unquote(type)
       @lunity_system_entities unquote(entities)
+      @lunity_system_filter unquote(filter)
       unquote(import_defn)
     end
   end
@@ -111,6 +119,7 @@ defmodule Lunity.System do
     read_modules = Enum.map(reads, fn {_key, mod} -> mod end)
     write_modules = Enum.map(writes, fn {_key, mod} -> mod end)
     entities = Module.get_attribute(env.module, :lunity_system_entities) || []
+    filter = Module.get_attribute(env.module, :lunity_system_filter)
 
     quote do
       @impl Lunity.System
@@ -119,7 +128,8 @@ defmodule Lunity.System do
           type: unquote(type),
           reads: unquote(read_modules),
           writes: unquote(write_modules),
-          entities: unquote(entities)
+          entities: unquote(entities),
+          filter: unquote(filter)
         }
       end
     end
