@@ -2,7 +2,8 @@ defmodule Lunity.Web.PlayerSocketIntegrationTest do
   use ExUnit.Case, async: false
 
   alias Lunity.Auth.PlayerJWT
-  alias Lunity.Web.PlayerSocketIntegrationClient
+  alias Lunity.Input.SessionMeta
+  alias Lunity.Web.{PlayerSocketIntegrationClient, PlayerWire}
 
   setup do
     port = 35000 + rem(:erlang.phash2({:player_ws_integration, self()}), 5000)
@@ -63,6 +64,14 @@ defmodule Lunity.Web.PlayerSocketIntegrationTest do
     end
   end
 
+  defp recv_raw do
+    receive do
+      {:player_ws_text, msg} -> msg
+    after
+      3000 -> flunk("timeout waiting for WebSocket frame")
+    end
+  end
+
   defp send_json(ws, map) do
     :ok = WebSockex.send_frame(ws, {:text, Jason.encode!(map)})
   end
@@ -110,16 +119,22 @@ defmodule Lunity.Web.PlayerSocketIntegrationTest do
       assert %{"t" => "hello_ack"} = recv_json()
       send_json(ws2, %{v: 1, t: "auth", token: jwt, resume: true})
 
-      ack = recv_json()
+      ack_raw = recv_raw()
 
-      assert %{
-               "t" => "ack",
-               "resumed" => true,
-               "instance_id" => ^id,
-               "player_id" => "p_int"
-             } = ack
+      expected_resume_ack =
+        Jason.encode!(
+          PlayerWire.resume_ack_map(
+            "u1",
+            "p_int",
+            %SessionMeta{
+              instance_id: id,
+              entity_id: :marker,
+              spawn: %{"kind" => "named", "id" => "lobby_a"}
+            }
+          )
+        )
 
-      assert ack["entity_id"] == "marker"
+      assert ack_raw == expected_resume_ack
 
       :ok = WebSockex.cast(ws2, :close)
       assert_receive {:DOWN, ^m2, :process, ^ws2, _}

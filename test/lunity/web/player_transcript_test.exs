@@ -3,14 +3,15 @@ defmodule Lunity.Web.PlayerTranscriptTest do
   Golden ordered transcript for the player protocol (in-process, no WebSocket).
 
   Phase 3 uses the same shapes for EAGL/WebGL parity tests (bootstrap, `subscribe_state`,
-  `actions`, **`auth` + `resume`**). See also `player_socket_integration_test.exs` for Bandit + WebSockex.
+  `actions`, **`auth` + `resume`**). Frame bytes for resume **`ack`** and **`resume_failed`** match
+  `Jason.encode!(Lunity.Web.PlayerWire.*)` — same as full-stack in `player_socket_integration_test.exs`.
   """
   use ExUnit.Case, async: false
 
   alias Lunity.Auth.PlayerJWT
   alias Lunity.Input.{Session, SessionMeta}
   alias Lunity.Player.Resume
-  alias Lunity.Web.PlayerMessage
+  alias Lunity.Web.{PlayerMessage, PlayerWire}
 
   setup do
     Application.put_env(:lunity, :player_jwt_secret, "jwt-transcript-secret")
@@ -179,17 +180,10 @@ defmodule Lunity.Web.PlayerTranscriptTest do
                  t1
                )
 
-      ack = Jason.decode!(ack_json)
+      meta_after = Session.get_meta(sid2) || %SessionMeta{}
 
-      assert %{
-               "t" => "ack",
-               "resumed" => true,
-               "user_id" => "u_golden",
-               "player_id" => "p_golden",
-               "instance_id" => "golden_inst",
-               "entity_id" => "paddle_left",
-               "spawn" => %{"kind" => "named", "id" => "lobby_a"}
-             } = ack
+      assert ack_json ==
+               Jason.encode!(PlayerWire.resume_ack_map("u_golden", "p_golden", meta_after))
 
       assert t2.phase == :in_world
       assert Session.get_meta(sid1) == nil
@@ -212,7 +206,10 @@ defmodule Lunity.Web.PlayerTranscriptTest do
                  s0
                )
 
-      assert %{"t" => "error", "code" => "resume_failed"} = Jason.decode!(err_json)
+      assert err_json ==
+               Jason.encode!(
+                 PlayerWire.error_map("resume_failed", "no pending session to resume")
+               )
     end
   end
 end

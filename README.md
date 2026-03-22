@@ -58,21 +58,22 @@ When `:player_mint_secret` is set, `POST /api/player/token` with header `X-Playe
 
 **Development defaults** — In this repo, `config/dev.exs` sets non-nil placeholders (`dev_player_ws_token`, `dev_player_jwt_secret`, `dev_player_mint_key`) so a local HTTP endpoint can accept `PlayerSocket` and mint. **`MIX_ENV=test` keeps `nil` from `config.exs`** (tests use `Application.put_env`). Game apps (e.g. **lunity-pong**) should mirror the same `:lunity` keys in **their** `config/dev.exs` when you run the server from that project.
 
-### Phase 3 — client parity (next)
+### Phase 3 — client parity (live `state` / `ecs`)
 
 **Where the two clients live**
 
-- **WebGL (browser)** — With `Lunity.Web.Endpoint` running (e.g. `mix lunity.edit` from a game project), open **`/player`** for a parity shell (`priv/static/player.html` + `/static/player_shell.js`): bootstrap, then **`subscribe_state`** + **`actions`** (unless `skip_followup=1`). A game may override `player.html` via `priv/static/player.html`. **`/pong`** serves **`priv/static/pong_gl.html`** from the **host game** only (minimal WebGL2 canvas placeholder in **lunity-pong**). Same query params as the CLI for mint: `token` + `jwt`, or `token` + `mint_key` + `user_id`, optional `hints`, `auth_only=1`, `resume=1` (sends `auth` with `resume: true` after a disconnect within the grace window). WebSockets use **`check_origin: :conn`** so **`127.0.0.1`** works when the default URL host is **`localhost`**.
-- **Elixir desktop** — Implemented **in Lunity**: a small **desktop** process that takes the **game server base URL** on the **command line** (and dev-only flags for tokens/JWT as needed), opens a WebSocket to `/ws/player`, and runs the same bootstrap as the browser. It can start **headless** (transcript / parity) and later attach to **wx + EAGL** for real input and rendering. **Headless CLI:** `mix lunity.player` (see `mix help lunity.player`) connects with [WebSockex](https://hex.pm/packages/websockex), performs `welcome` → `hello` → `auth` → `join` (hints only; no instance override), prints `ack` / `assigned`, or **`--auth-only`** for handshake testing without `join`. **Important:** `mix lunity.edit` (which serves port 4111) must be run from the **game** Mix project when you rely on `config :lunity, :player_join`; running it from the `lunity` repo alone leaves `player_join` unset, so `mix lunity.player` fails with `instance_id required`.
+- **WebGL (browser)** — With `Lunity.Web.Endpoint` running (e.g. `mix lunity.edit` from a game project), open **`/player`** for a parity shell (`priv/static/player.html` + `/static/player_shell.js`): bootstrap, then **`subscribe_state`** + **`actions`** (unless `skip_followup=1`). Add **`live=1`** to keep the socket open and render each periodic **`state`** frame’s **`ecs`** snapshot as JSON (Phase 3 “same instance, two surfaces”). A game may override `player.html` via `priv/static/player.html`. **`/pong`** serves **`priv/static/pong_gl.html`** from the **host game** only (minimal WebGL2 canvas placeholder in **lunity-pong**). Same query params as the CLI for mint: `token` + `jwt`, or `token` + `mint_key` + `user_id`, optional `hints`, `auth_only=1`, `resume=1` (sends `auth` with `resume: true` after a disconnect within the grace window). WebSockets use **`check_origin: :conn`** so **`127.0.0.1`** works when the default URL host is **`localhost`**.
+- **Elixir desktop** — **`mix lunity.player`** (headless [WebSockex](https://hex.pm/packages/websockex)) runs the same transcript for CI / one-shot parity. **`mix lunity.player_window`** opens a **wx** window and streams the same **`state.ecs`** JSON as the browser’s **`live=1`** mode—no GL yet; assets and shaders are a later phase. **Important:** `mix lunity.edit` (which serves port 4111) must be run from the **game** Mix project when you rely on `config :lunity, :player_join`; running it from the `lunity` repo alone leaves `player_join` unset, so the CLI fails with `instance_id required`.
+- **Simulation must be running** — `state` only changes when the **`Lunity.Instance`** is **ticking** (`:running`). The editor often **pauses** the watched instance (transport ⏸, picking an entity, MCP). Press **▶ Play** in the editor toolbar so physics advances; otherwise positions in the JSON stay fixed while the player tick counter still increases.
 
 **Why duplicate “browser” work on the desktop**
 
-The native client will **reimplement** many things the browser bundles for free (WebSocket ergonomics, timing, input, audio, GL context lifecycle). That overlap is **intentional**: the **multi-platform promise** is one **frozen wire protocol** and shared **engine contracts**, with **multiple shells**—not one shell pretending to be the only client.
+The native stack will **reimplement** many things the browser bundles for free (WebSocket ergonomics, timing, input, audio, GL context lifecycle). That overlap is **intentional**: the **multi-platform promise** is one **frozen wire protocol** and shared **engine contracts**, with **multiple shells**—not one shell pretending to be the only client. **EAGL + real rendering** attach on top of the same `PlayerSocket` contract once **`state`** / ECS snapshots are proven end-to-end (this section).
 
 **Parity work**
 
-- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs) (bootstrap, `subscribe_state`, **`auth` + `resume`**, `resume_failed`). Real WebSocket coverage: [`test/lunity/web/player_socket_integration_test.exs`](test/lunity/web/player_socket_integration_test.exs). Extend transcripts with the same JSON lines you expect from desktop and WebGL shells.
-- **Desktop / WebGL** — `mix lunity.player` and `/player` (`player_shell.js`) mirror the same bootstrap; with **`--resume`** / **`resume=1`**, both skip **`join`** when the server **`ack`** includes **`resumed`** and **`instance_id`**. Frame timing may differ; **transcript** should match.
+- **Golden transcripts** — In-process protocol checks live in [`test/lunity/web/player_transcript_test.exs`](test/lunity/web/player_transcript_test.exs) (bootstrap, `subscribe_state`, **`auth` + `resume`**, `resume_failed`). Real WebSocket coverage: [`test/lunity/web/player_socket_integration_test.exs`](test/lunity/web/player_socket_integration_test.exs). Critical frames are **`Jason.encode!` of [`Lunity.Web.PlayerWire`](lib/lunity/web/player_wire.ex)** so transcript and integration assert the **same wire bytes** for resume **`ack`** / **`resume_failed`**. Extend with the same JSON you expect from desktop and WebGL shells.
+- **Desktop / WebGL** — `mix lunity.player`, **`mix lunity.player_window`**, and **`/player`** (`player_shell.js`) share the same bootstrap; **`live=1`** vs **`player_window`** both surface **`ecs`** from **`subscribe_state`** pushes. With **`--resume`** / **`resume=1`**, shells skip **`join`** when the server **`ack`** includes **`resumed`** and **`instance_id`**. Frame timing may differ; **transcript** should match for the one-shot parity path.
 
 ## Design goals
 
@@ -681,6 +682,10 @@ On macOS, closing the editor window can occasionally trigger a segmentation faul
 ## Coordinate system
 
 Right-handed XYZ, Y up. Horizon plane is XZ.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for tests, formatting, and where to look for protocol vs engine changes.
 
 ## Documentation
 

@@ -27,7 +27,12 @@ function parseQuery() {
     hintsRaw: s.get("hints") || "",
     skip_followup:
       s.get("skip_followup") === "1" || s.get("skip_followup") === "true",
-    resume: s.get("resume") === "1" || s.get("resume") === "true"
+    resume: s.get("resume") === "1" || s.get("resume") === "true",
+    /** `live=1` — keep WebSocket open; show periodic `state.ecs` in #state (Phase 3). */
+    live:
+      s.get("live") === "1" ||
+      s.get("live") === "true" ||
+      s.get("stream_state") === "1"
   };
 }
 
@@ -73,11 +78,19 @@ async function mintJwt(baseUrl, mintKey, userId, playerId) {
 }
 
 /**
- * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean, resume?: boolean }} opts
- * @returns {Promise<object>} Resolves with `assigned` / `subscribeAck` / `actionsAck`; `fromResume` is true when the resume branch skipped `join`.
+ * @param {{ wsUrl: string, jwt: string, hints: object | null, authOnly: boolean, followup?: boolean, resume?: boolean, streamState?: boolean }} opts
+ * @returns {Promise<object>} Resolves with `assigned` / `subscribeAck` / `actionsAck`; `fromResume` is true when the resume branch skipped `join`. With `streamState`, the promise stays pending until the socket closes.
  */
 function runBootstrap(opts) {
-  const { wsUrl, jwt, hints, authOnly, followup = true, resume = false } = opts;
+  const {
+    wsUrl,
+    jwt,
+    hints,
+    authOnly,
+    followup = true,
+    resume = false,
+    streamState = false
+  } = opts;
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
@@ -112,6 +125,10 @@ function runBootstrap(opts) {
     };
 
     ws.onclose = (ev) => {
+      if (phase === "streaming") {
+        log(`(WebSocket closed, code ${ev.code})`);
+        return;
+      }
       if (!settled && phase !== "done") {
         finish(reject, new Error(`WebSocket closed prematurely (code ${ev.code})`));
       }
@@ -172,7 +189,7 @@ function runBootstrap(opts) {
               spawn: msg.spawn != null ? msg.spawn : null
             };
             log("(resume) skip join — ack carried instance_id; subscribe_state …");
-            if (!followup) {
+            if (!followup && !streamState) {
               phase = "done";
               ws.close();
               finish(resolve, { assigned: lastAssigned, fromResume: true });
@@ -197,7 +214,7 @@ function runBootstrap(opts) {
             throw new Error(`expected assigned, got ${msg.t}`);
           }
           lastAssigned = msg;
-          if (!followup) {
+          if (!followup && !streamState) {
             phase = "done";
             ws.close();
             finish(resolve, { assigned: msg });
@@ -216,6 +233,13 @@ function runBootstrap(opts) {
             throw new Error(`expected subscribe_ack, got ${msg.t}`);
           }
           lastSubscribeAck = msg;
+          if (streamState) {
+            const st = document.getElementById("state");
+            if (st) st.textContent = "Subscribed — waiting for ecs snapshots…\n";
+            phase = "streaming";
+            log("(live) subscribed — streaming `state.ecs`");
+            return;
+          }
           const ent = lastAssigned.entity_id != null ? String(lastAssigned.entity_id) : "paddle_left";
           const act = JSON.stringify({
             v: 1,
@@ -226,6 +250,18 @@ function runBootstrap(opts) {
           log(`-> ${act}`);
           ws.send(act);
           phase = "expect_actions_ack";
+        } else if (phase === "streaming") {
+          if (msg.t === "state") {
+            const ecs = msg.ecs != null ? msg.ecs : {};
+            const st = document.getElementById("state");
+            if (st) st.textContent = JSON.stringify(ecs, null, 2);
+            return;
+          }
+          if (msg.t === "error") {
+            finish(reject, errFromServer(msg));
+            return;
+          }
+          log(`(streaming, ignored: ${msg.t})`);
         } else if (phase === "expect_actions_ack") {
           if (msg.t === "state") {
             log("(periodic state push)");
@@ -278,14 +314,17 @@ async function runFromQuery() {
 
   const hints = q.hintsRaw ? parseHints(q.hintsRaw) : null;
   const wsUrl = buildWsUrl(baseUrl, q.token);
+  const streamState = q.live === true;
+  const followup = streamState ? true : !q.skip_followup;
 
   const result = await runBootstrap({
     wsUrl,
     jwt,
     hints,
     authOnly: q.authOnly,
-    followup: !q.skip_followup,
-    resume: q.resume
+    followup,
+    resume: q.resume,
+    streamState
   });
 
   if (result.assigned && result.actionsAck) {

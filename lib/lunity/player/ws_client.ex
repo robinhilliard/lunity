@@ -10,6 +10,7 @@ defmodule Lunity.Player.WsClient do
           | :expect_assigned
           | :expect_subscribe_ack
           | :expect_actions_ack
+          | :streaming
 
   @type t :: %{
           parent: pid,
@@ -18,15 +19,23 @@ defmodule Lunity.Player.WsClient do
           auth_only: boolean(),
           followup: boolean(),
           resume: boolean(),
+          stream_state: boolean(),
           assigned_row: map() | nil,
           subscribe_ack: map() | nil,
           phase: phase(),
           verbose: boolean(),
-          done: boolean()
+          done: boolean(),
+          resume_used: boolean()
         }
 
   def start_link(ws_url, state, ws_opts) when is_map(state) do
-    WebSockex.start_link(ws_url, __MODULE__, Map.put(state, :done, false), ws_opts)
+    state =
+      state
+      |> Map.put(:done, false)
+      |> Map.put_new(:resume_used, false)
+      |> Map.put_new(:stream_state, false)
+
+    WebSockex.start_link(ws_url, __MODULE__, state, ws_opts)
   end
 
   @impl true
@@ -137,6 +146,12 @@ defmodule Lunity.Player.WsClient do
     {:ok, state}
   end
 
+  defp dispatch_text(%{"t" => "subscribe_ack"} = sub, %{phase: :expect_subscribe_ack, stream_state: true} = state) do
+    verbose(state, "-> (stream_state) stay subscribed; push ecs snapshots")
+    notify(state, {:ready, sub})
+    {:ok, %{state | phase: :streaming, subscribe_ack: sub}}
+  end
+
   defp dispatch_text(json, %{phase: :expect_subscribe_ack} = state) do
     case json do
       %{"t" => "subscribe_ack"} = sub ->
@@ -160,12 +175,31 @@ defmodule Lunity.Player.WsClient do
     end
   end
 
+  defp dispatch_text(%{"t" => "state"} = m, %{phase: :streaming} = state) do
+    verbose(state, "<- state (ecs snapshot)")
+    notify(state, {:state, m})
+    {:ok, state}
+  end
+
+  defp dispatch_text(%{"t" => "ping"}, %{phase: :streaming} = state) do
+    out = Jason.encode!(%{v: 1, t: "pong"})
+    {:reply, {:text, out}, state}
+  end
+
+  defp dispatch_text(other, %{phase: :streaming} = state) do
+    t = Map.get(other, "t")
+    verbose(state, "<- (streaming) #{inspect(t)}")
+    {:ok, state}
+  end
+
   defp dispatch_text(json, %{phase: :expect_actions_ack} = state) do
     case json do
       %{"t" => "actions_ack"} = ack ->
         notify(
           state,
-          {:ok, {:parity, state.assigned_row, state.subscribe_ack, ack}}
+          {:ok,
+           {:parity, state.assigned_row, state.subscribe_ack, ack,
+            %{resume: Map.get(state, :resume_used, false)}}}
         )
 
         {:close, %{state | done: true}}
@@ -196,7 +230,8 @@ defmodule Lunity.Player.WsClient do
     out = Jason.encode!(%{v: 1, t: "subscribe_state", filter: nil})
     verbose(state, "-> #{out}")
 
-    {:reply, {:text, out}, %{state | phase: :expect_subscribe_ack, assigned_row: assigned}}
+    {:reply, {:text, out},
+     %{state | phase: :expect_subscribe_ack, assigned_row: assigned, resume_used: true}}
   end
 
   defp resume_followup(state, assigned) do

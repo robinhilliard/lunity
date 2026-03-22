@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Lunity.Player do
   """
   use Mix.Task
 
-  alias Lunity.Player.{WsClient, WsUrl}
+  alias Lunity.Player.{Connect, WsClient, WsUrl}
 
   @impl Mix.Task
   def run(argv) do
@@ -76,10 +76,10 @@ defmodule Mix.Tasks.Lunity.Player do
   end
 
   defp run_client(opts) do
-    with {:ok, ws_token} <- ws_token(opts),
+    with {:ok, ws_token} <- Connect.ws_token(opts),
          {:ok, ws_url} <- WsUrl.from_base_url(opts.url, ws_token),
-         {:ok, jwt} <- resolve_jwt(opts),
-         {:ok, hints} <- parse_hints(opts[:hints]) do
+         {:ok, jwt} <- Connect.resolve_jwt(opts),
+         {:ok, hints} <- Connect.parse_hints(opts[:hints]) do
       parent = self()
 
       ws_state = %{
@@ -89,6 +89,7 @@ defmodule Mix.Tasks.Lunity.Player do
         auth_only: opts[:auth_only] == true,
         followup: opts[:auth_only] != true and opts[:skip_followup] != true,
         resume: opts[:resume] == true,
+        stream_state: false,
         assigned_row: nil,
         subscribe_ack: nil,
         phase: :welcome,
@@ -139,8 +140,12 @@ defmodule Mix.Tasks.Lunity.Player do
     end
   end
 
-  defp report_ok({:ok, {:parity, _assigned, _sub, actions_ack}}, opts) do
+  defp report_ok({:ok, {:parity, _assigned, _sub, actions_ack, meta}}, opts) do
     if opts[:verbose] != true do
+      if meta[:resume] == true and opts[:resume] == true do
+        IO.puts(:stderr, "[lunity.player] parity: resume path (join skipped)")
+      end
+
       IO.puts(Jason.encode!(actions_ack))
     end
   end
@@ -152,61 +157,6 @@ defmodule Mix.Tasks.Lunity.Player do
   end
 
   defp report_ok(_, _), do: :ok
-
-  defp ws_token(opts) do
-    case opts[:token] || System.get_env("PLAYER_WS_TOKEN") do
-      t when is_binary(t) and t != "" -> {:ok, t}
-      _ -> {:error, "Missing --token or PLAYER_WS_TOKEN"}
-    end
-  end
-
-  defp resolve_jwt(%{jwt: jwt}) when is_binary(jwt) and jwt != "", do: {:ok, jwt}
-
-  defp resolve_jwt(%{mint_key: key, url: base, user_id: uid} = opts)
-       when is_binary(key) and key != "" and is_binary(uid) and uid != "" do
-    player_id = opts[:player_id] || uid
-    mint_jwt(String.trim_trailing(base, "/"), key, uid, player_id, opts[:verbose] == true)
-  end
-
-  defp resolve_jwt(%{mint_key: key}) when is_binary(key) and key != "",
-    do: {:error, "Mint requires --user-id"}
-
-  defp resolve_jwt(_), do: {:error, "Provide --jwt or (--mint-key and --user-id)"}
-
-  defp mint_jwt(base, mint_key, user_id, player_id, verbose) do
-    url = base <> "/api/player/token"
-
-    req =
-      Req.new(
-        url: url,
-        method: :post,
-        json: %{user_id: user_id, player_id: player_id},
-        headers: %{"x-player-mint-key" => mint_key}
-      )
-
-    if verbose, do: IO.puts(:stderr, "[lunity.player] POST #{url}")
-
-    case Req.request(req) do
-      {:ok, %{status: 200, body: %{"token" => t}}} when is_binary(t) ->
-        {:ok, t}
-
-      {:ok, %{status: st, body: body}} ->
-        {:error, {:mint_failed, st, body}}
-
-      {:error, e} ->
-        {:error, {:mint_req, e}}
-    end
-  end
-
-  defp parse_hints(nil), do: {:ok, nil}
-
-  defp parse_hints(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> {:ok, map}
-      {:ok, other} -> {:error, "hints must be a JSON object, got: #{inspect(other)}"}
-      {:error, _} -> {:error, "invalid JSON for --hints"}
-    end
-  end
 
   defp format_error(msg) when is_binary(msg), do: msg
 

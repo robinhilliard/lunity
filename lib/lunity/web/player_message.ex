@@ -4,7 +4,7 @@ defmodule Lunity.Web.PlayerMessage do
   alias Lunity.Auth.PlayerJWT
   alias Lunity.Input.{Session, SessionMeta}
   alias Lunity.Player.Resume
-  alias Lunity.Web.EcsState
+  alias Lunity.Web.{EcsState, PlayerWire}
 
   @protocol_v 1
   @max_actions_per_frame 64
@@ -97,10 +97,10 @@ defmodule Lunity.Web.PlayerMessage do
                       :authenticated
                     end
 
-                  ack = resume_ack_map(user_id, player_id, meta)
+                  ack_map = PlayerWire.resume_ack_map(user_id, player_id, meta)
 
                   reply_ok(
-                    [Jason.encode!(ack)],
+                    [Jason.encode!(ack_map)],
                     Map.put(state, :phase, phase)
                   )
               end
@@ -384,7 +384,7 @@ defmodule Lunity.Web.PlayerMessage do
           v: @protocol_v,
           t: "assigned",
           instance_id: instance_id,
-          entity_id: entity_to_wire(entity_id),
+          entity_id: PlayerWire.entity_to_wire(entity_id),
           spawn: spawn_norm
         })
       ],
@@ -394,35 +394,8 @@ defmodule Lunity.Web.PlayerMessage do
 
   defp reply_ok(frames, state), do: {:ok, frames, state}
 
-  defp resume_ack_map(user_id, player_id, %SessionMeta{} = meta) do
-    base = %{
-      v: @protocol_v,
-      t: "ack",
-      user_id: user_id,
-      player_id: player_id,
-      resumed: true
-    }
-
-    if is_binary(meta.instance_id) and meta.instance_id != "" do
-      Map.merge(base, %{
-        instance_id: meta.instance_id,
-        entity_id: entity_to_wire(meta.entity_id),
-        spawn: meta.spawn
-      })
-    else
-      base
-    end
-  end
-
   defp reply_error(code, message, state) do
-    json =
-      Jason.encode!(%{
-        v: @protocol_v,
-        t: "error",
-        code: code,
-        message: message
-      })
-
+    json = Jason.encode!(PlayerWire.error_map(code, message))
     {:ok, [json], state}
   end
 
@@ -527,10 +500,6 @@ defmodule Lunity.Web.PlayerMessage do
       _ -> m
     end
   end
-
-  defp entity_to_wire(nil), do: nil
-  defp entity_to_wire(id) when is_atom(id), do: Atom.to_string(id)
-  defp entity_to_wire(id), do: to_string(id)
 
   defp schedule_state_push(state) do
     if ref = state[:state_timer_ref] do
