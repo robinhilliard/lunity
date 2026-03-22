@@ -102,6 +102,51 @@ A system never loops over entities in Elixir. Instead, it performs tensor
 operations that apply to all rows simultaneously -- like applying a formula
 to an entire spreadsheet column.
 
+### Why every collider entity needs a velocity
+
+You might notice that walls and the floor in Pong have a `Velocity`
+component set to `{0, 0, 0}`, even though they never move. This is because
+the collision system's `@spec` declares velocity as a read component -- and
+tensor systems receive the **entire tensor**, not a filtered subset. There is
+no way to say "only read velocity for the ball." Every entity that
+participates in collision must have a velocity row so the math works on the
+full tensor.
+
+The walls' zero velocity means the swept ray-cast computes zero relative
+movement for them, and the `Static` flag separately prevents the collision
+response from pushing them. This is a fundamental consequence of the
+column-oriented model: if a system reads a component, every entity in the
+store has a row for it (empty slots have zeros and a presence mask of 0).
+
+This is different from most ECS frameworks. In an archetype-based ECS like
+Bevy, entities with different component sets live in separate storage tables.
+A query for `(Position, Velocity, BoxCollider)` would only match entities
+that have all three. A wall with only `(Position, BoxCollider)` would not
+appear -- no placeholder velocity needed. Lunity trades this flexibility for
+the ability to process all entities in a single tensor operation (and,
+potentially, on a GPU via Nx backends like EXLA).
+
+### How this scales -- and the gather/scatter workaround
+
+Dense tensors work well when most entities share the same component set. In
+Pong, all 6 entities have roughly the same components, so the tensors are
+nearly full. But imagine a game with 10,000 entities where only 100 have
+velocity -- `Nx.multiply` would run on a `{10000, 3}` tensor to move 100
+things, wasting 99% of the work on zeros.
+
+Lunity's `SweptAABBCollision` system already contains the workaround: it
+reads the presence mask, gathers only the active rows into compact tensors,
+runs the collision math on those, then scatters the results back. If 6 out
+of 128 entities have colliders, the N-squared collision runs on 6x6 instead
+of 128x128. This is essentially a manual version of what an archetype ECS
+does automatically -- you can apply the same pattern in your own systems
+when the entity count grows.
+
+For most games that Lunity targets (tens to low thousands of entities with
+similar component sets), the dense tensor model is efficient and simple. It
+is not suited for open-world games with tens of thousands of heterogeneous
+objects.
+
 ---
 
 ## Part 3: The simplest system -- ApplyVelocity
