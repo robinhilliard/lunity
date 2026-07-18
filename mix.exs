@@ -8,7 +8,20 @@ defmodule Lunity.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       test_ignore_filters: [~r/test\/support\//],
+      aliases: aliases(),
       deps: deps()
+    ]
+  end
+
+  def cli do
+    [preferred_envs: ["test.apple_silicon": :test]]
+  end
+
+  defp aliases do
+    [
+      # Metal / MLX coverage (Emily). Excluded from default `mix test`.
+      # Use `mix test --include apple_silicon` to run the full suite plus GPU cases.
+      "test.apple_silicon": ["test --only apple_silicon"]
     ]
   end
 
@@ -39,8 +52,8 @@ defmodule Lunity.MixProject do
   defp deps do
     [
       eagl_dep(),
-      {:nx, "~> 0.9"},
-      {:exla, "~> 0.11"},
+      {:nx, "~> 0.12"},
+      {:exla, "~> 0.12"},
       {:jason, "~> 1.4"},
       {:joken, "~> 2.6"},
       {:phoenix, "~> 1.7"},

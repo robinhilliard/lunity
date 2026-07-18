@@ -303,7 +303,7 @@ Lunity.Instance.stop("game_42")
 3. **EXLA** host (CPU JIT) when no GPU client is present
 4. **Nx.BinaryBackend** as last resort
 
-Tests force `:binary` for determinism. Filtered tensor systems keep gather/scatter indices on-device across ticks; Lua/web/MCP IO goes through `Lunity.Nx.Host` so host sync stays at the edges.
+Tests force `:binary` for determinism. On Apple Silicon, opt into Metal/MLX coverage with `mix test.apple_silicon` (tagged `:apple_silicon`). Filtered tensor systems keep gather/scatter indices on-device across ticks; Lua/web/MCP IO goes through `Lunity.Nx.Host` so host sync stays at the edges.
 
 ## Editor
 

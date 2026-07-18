@@ -21,7 +21,8 @@ backend:
 4. `Nx.BinaryBackend`
 
 Override with `config :lunity, :nx, backend: :auto | :emily | :emlx | :exla | :binary`
-or `LUNITY_NX_BACKEND`. Tests force `:binary`.
+or `LUNITY_NX_BACKEND`. Default tests force `:binary`. On macOS arm64, run Metal
+coverage with `mix test.apple_silicon` (ExUnit tag `:apple_silicon`).
 
 Filtered systems cache **device index tensors** for gather/scatter so the
 tick path avoids per-frame host sync. Per-entity CRUD, Lua mods, web JSON,
