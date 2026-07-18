@@ -31,3 +31,4 @@ lunity-*.tar
 .elixir_ls/
 native/*/target/
 test.pcm
+.DS_Store

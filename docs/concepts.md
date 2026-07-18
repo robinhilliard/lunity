@@ -234,7 +234,7 @@ Detailed internals: [Scene and Prefab Loading](subsystems/02_scene_and_prefab.md
 
 ## Instance
 
-An instance is one running copy of a game. Each instance has its own
+An instance is one running copy of a game world. Each instance has its own
 ComponentStore (isolated ETS tables and tensors), its own entity set, and its
 own tick loop. You can run multiple instances in parallel -- for example, one
 Pong game per match.
@@ -242,6 +242,22 @@ Pong game per match.
 ```elixir
 {:ok, _pid} = Lunity.Instance.start(Pong.Scenes.Pong, manager: Pong.Manager)
 ```
+
+Instances are lightweight and independent, so they can serve different
+roles in a multiplayer game:
+
+- **Match rooms** -- each Pong match is its own instance with its own ball
+  and paddles.
+- **Lobby / foyer** -- a shared instance where joining players see each
+  other before being assigned to a match instance.
+- **World partitions** -- zones or rooms in a larger game world, each
+  running as a separate instance. Players move between instances as they
+  cross zone boundaries.
+
+Because instances are isolated GenServers on the BEAM, they can run on
+different schedulers (cores) or even different nodes in a cluster -- the
+[player protocol](subsystems/05_player_protocol_and_auth.md) handles
+binding a player to whichever instance they belong to.
 
 Instances can be paused, stepped, snapshotted, cloned, and run
 deterministically with `run_ticks/2` for testing.
@@ -252,7 +268,7 @@ deterministically with `run_ticks/2` for testing.
 |--------|-----------|----------------|
 | Unity | No direct equivalent | Unity has one world; Lunity isolates each game in its own store |
 | Godot | SceneTree (one per process) | Lunity can run many instances in the same BEAM process |
-| Unreal | GameInstance / World | Lunity instances are lightweight GenServers, not full engine worlds |
+| Unreal | GameInstance / World | Lunity instances are lightweight GenServers, not full engine worlds; closer to Unreal's Dedicated Server model where each match is a separate world |
 
 Detailed internals: [ECS Core](subsystems/01_ecs_core.md)
 
@@ -287,7 +303,19 @@ defmodule Pong.Manager do
 end
 ```
 
-A game defines exactly one Manager. `setup/0` is called once on first start.
+A game can define multiple Managers for different kinds of instances. A Pong
+match and a lobby would have completely different component sets, systems,
+and tick rates -- each gets its own Manager module. Pass the manager
+explicitly when starting an instance:
+
+```elixir
+{:ok, _} = Lunity.Instance.start(Pong.Scenes.Pong, manager: Pong.Manager)
+{:ok, _} = Lunity.Instance.start(Lobby.Scenes.Foyer, manager: Lobby.Manager)
+```
+
+If no `manager:` is given, Lunity auto-discovers a Manager by scanning
+loaded modules (convenient for single-manager games). `setup/0` is called
+once on first start.
 
 Detailed internals: [ECS Core](subsystems/01_ecs_core.md)
 
