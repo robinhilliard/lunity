@@ -114,7 +114,7 @@ Lunity provides its own ECS component system built on Nx tensors and ETS. Compon
 
 ### Tensor components
 
-Numeric data stored as Nx tensors in contiguous memory. Processed every tick by `defn` systems that operate on entire tensors at once -- no per-entity iteration loops. This runs on CPU today (via Nx.BinaryBackend or EXLA) and can target GPU (CUDA via EXLA) with zero code changes when deployed to servers with GPUs.
+Numeric data stored as Nx tensors in contiguous memory. Processed every tick by `defn` systems that operate on entire tensors at once -- no per-entity iteration loops. At boot, Lunity auto-selects the best available Nx backend: Emily/EMLX (Apple Silicon Metal), EXLA CUDA/ROCm/TPU, EXLA host, or BinaryBackend. Override with `config :lunity, :nx, backend: :auto` or `LUNITY_NX_BACKEND`.
 
 ```elixir
 defmodule MyGame.Components.Position do
@@ -296,7 +296,14 @@ Lunity.Instance.stop("game_42")
 
 ### GPU path
 
-Tensor components and `defn` systems run on Nx.BinaryBackend (CPU) during development. In production on a server with an NVIDIA GPU, switching to EXLA with CUDA runs the same `defn` code on GPU with massive parallelism -- no code changes needed. Since game clients render in the browser, the server GPU is free for compute.
+`Lunity.Nx.Backend` probes for an accelerator at application start:
+
+1. **Emily** (or EMLX) on macOS arm64 — Metal via MLX
+2. **EXLA** CUDA / ROCm / TPU when those clients are available
+3. **EXLA** host (CPU JIT) when no GPU client is present
+4. **Nx.BinaryBackend** as last resort
+
+Tests force `:binary` for determinism. On Apple Silicon, opt into Metal/MLX coverage with `mix test.apple_silicon` (tagged `:apple_silicon`). Filtered tensor systems keep gather/scatter indices on-device across ticks; Lua/web/MCP IO goes through `Lunity.Nx.Host` so host sync stays at the edges.
 
 ## Editor
 

@@ -10,6 +10,25 @@ systems](../concepts.md#entity) are at a high level. This guide
 focuses on the *tensor* side -- how data is actually laid out in memory, how
 systems operate on it, and the Nx operations you will use most.
 
+### Accelerator backends
+
+At application start, `Lunity.Nx.Backend` selects the best available Nx
+backend:
+
+1. Emily (or EMLX) on Apple Silicon — Metal via MLX
+2. EXLA CUDA / ROCm / TPU when those platforms are present
+3. EXLA host (CPU JIT)
+4. `Nx.BinaryBackend`
+
+Override with `config :lunity, :nx, backend: :auto | :emily | :emlx | :exla | :binary`
+or `LUNITY_NX_BACKEND`. Default tests force `:binary`. On macOS arm64, run Metal
+coverage with `mix test.apple_silicon` (ExUnit tag `:apple_silicon`).
+
+Filtered systems cache **device index tensors** for gather/scatter so the
+tick path avoids per-frame host sync. Per-entity CRUD, Lua mods, web JSON,
+and MCP tools should go through `Lunity.Nx.Host` (`to_list` / `to_number` /
+`from_host`) so transfers stay at IO edges.
+
 ---
 
 ## Part 1: What a tensor component looks like in memory

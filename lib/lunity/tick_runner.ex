@@ -11,6 +11,7 @@ defmodule Lunity.TickRunner do
 
   alias Lunity.{ComponentStore, System}
   alias Lunity.ComponentStore.Gather
+  alias Lunity.Nx.Host
 
   @doc "Runs all systems in order."
   def tick(systems) do
@@ -54,14 +55,14 @@ defmodule Lunity.TickRunner do
   end
 
   defp run_filtered_tensor_system(system_module, opts, inputs, filter) do
-    indices = Gather.active_indices(filter)
+    index_set = Gather.active_index_set(filter)
 
-    if indices == [] do
+    if index_set.count == 0 do
       :ok
     else
-      compact_inputs = Gather.gather(inputs, indices)
+      compact_inputs = Gather.gather(inputs, index_set)
       compact_outputs = system_module.run(compact_inputs)
-      full_outputs = Gather.scatter(inputs, compact_outputs, indices)
+      full_outputs = Gather.scatter(inputs, compact_outputs, index_set)
       write_outputs(opts, full_outputs)
     end
   end
@@ -86,7 +87,7 @@ defmodule Lunity.TickRunner do
       Map.new(entity_names, fn name ->
         key = :"#{name}_idx"
         idx = ComponentStore.index_of(name) || -1
-        {key, Nx.tensor(idx, type: :s32)}
+        {key, Host.from_host(idx, type: :s32)}
       end)
 
     Map.merge(inputs, indices)

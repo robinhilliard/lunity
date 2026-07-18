@@ -11,6 +11,7 @@ The **`mix lunity.player_window`** task runs **`deps.compile lunity`** before co
 - **Format:** `mix format`
 - **Compile:** `mix compile --warnings-as-errors`
 - **Tests:** `mix test` (requires Erlang/OTP with **wx** for the full suite, as in the README prerequisites)
+- **Apple Silicon GPU tests:** default `mix test` stays on `Nx.BinaryBackend`. On macOS arm64 with Emily compiled, run Metal-only coverage with `mix test.apple_silicon` (`--only apple_silicon`), or the full suite plus GPU with `mix test --include apple_silicon`. Cases use the `:apple_silicon` tag via `Lunity.AppleSiliconCase`. If Emily’s first compile fails to download its NIF (common when the hostname has spaces and Erlang short names break), download `emily-nif-*-aot-macos-arm64.tar.gz` from the [Emily release](https://github.com/ausimian/emily/releases) into `$EMILY_CACHE` (default `$(getconf DARWIN_USER_CACHE_DIR)emily/`) and re-run `mix deps.compile emily`.
 
 `test/support/` holds helpers and is not run as tests (`test_ignore_filters` in `mix.exs`).
 

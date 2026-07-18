@@ -1218,7 +1218,7 @@ defmodule Lunity.MCP.Server do
                   Lunity.ComponentStore.put(
                     Lunity.Components.RandomKey,
                     eid,
-                    Nx.to_flat_list(k1) |> List.to_tuple()
+                    Lunity.Nx.Host.to_list(k1) |> List.to_tuple()
                   )
                 end
               end

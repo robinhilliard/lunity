@@ -162,13 +162,27 @@ defmodule Lunity.ComponentStore.GatherTest do
       end)
 
       tensor_table = :"lunity_tensors_#{sid}"
-      cached_before = :ets.match(tensor_table, {{:_, :cached_indices}, :_})
+      cached_before = :ets.match(tensor_table, {{:_, :cached_active}, :_})
       assert length(cached_before) > 0
 
       ComponentStore.deallocate(:ball, sid)
 
-      cached_after = :ets.match(tensor_table, {{:_, :cached_indices}, :_})
+      cached_after = :ets.match(tensor_table, {{:_, :cached_active}, :_})
       assert cached_after == []
+    end
+
+    test "active_index_set/2 returns device tensors and count", %{store_id: sid} do
+      populate_entities(sid)
+
+      set =
+        ComponentStore.with_store(sid, fn ->
+          Gather.active_index_set(Velocity)
+        end)
+
+      assert set.count == 2
+      assert Nx.shape(set.indices) == {2}
+      assert Nx.shape(set.put_indices) == {2, 1}
+      assert Nx.type(set.indices) == {:s, 32}
     end
   end
 
@@ -327,8 +341,46 @@ defmodule Lunity.ComponentStore.GatherTest do
       Gather.invalidate_cache(sid)
 
       tensor_table = :"lunity_tensors_#{sid}"
-      cached = :ets.match(tensor_table, {{:_, :cached_indices}, :_})
+      cached = :ets.match(tensor_table, {{:_, :cached_active}, :_})
       assert cached == []
+    end
+  end
+
+  describe "gather/scatter with index-set maps" do
+    test "gather and scatter accept active_index_set maps", %{store_id: sid} do
+      populate_entities(sid)
+
+      result =
+        ComponentStore.with_store(sid, fn ->
+          index_set = Gather.active_index_set(Velocity)
+
+          inputs = %{
+            position: ComponentStore.get_tensor(Position),
+            velocity: ComponentStore.get_tensor(Velocity)
+          }
+
+          compact = Gather.gather(inputs, index_set)
+          assert Nx.shape(compact.position) == {2, 3}
+
+          new_vel = Nx.broadcast(Nx.tensor(1.0, type: :f32), {2, 3})
+          scattered = Gather.scatter(inputs, %{velocity: new_vel}, index_set)
+
+          paddle_idx = ComponentStore.index_of(:paddle)
+          ball_idx = ComponentStore.index_of(:ball)
+          floor_idx = ComponentStore.index_of(:floor)
+
+          {
+            Nx.to_flat_list(scattered.velocity[paddle_idx]),
+            Nx.to_flat_list(scattered.velocity[ball_idx]),
+            Nx.to_flat_list(scattered.velocity[floor_idx]),
+            Nx.to_flat_list(inputs.velocity[floor_idx])
+          }
+        end)
+
+      {paddle, ball, floor_after, floor_before} = result
+      assert paddle == [1.0, 1.0, 1.0]
+      assert ball == [1.0, 1.0, 1.0]
+      assert floor_after == floor_before
     end
   end
 end

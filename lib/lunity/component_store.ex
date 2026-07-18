@@ -33,6 +33,8 @@ defmodule Lunity.ComponentStore do
 
   use GenServer
 
+  alias Lunity.Nx.Host
+
   @default_capacity 128
 
   # -- Store context ------------------------------------------------------------
@@ -224,7 +226,7 @@ defmodule Lunity.ComponentStore do
 
       mask ->
         mask
-        |> Nx.to_flat_list()
+        |> Host.to_list()
         |> Enum.with_index()
         |> Enum.filter(fn {val, _idx} -> val == 1 end)
         |> Enum.map(fn {_, idx} -> entity_at(idx, sid) end)
@@ -522,16 +524,17 @@ defmodule Lunity.ComponentStore do
 
         case opts.shape do
           {} ->
-            Nx.to_number(tensor[index])
+            Host.to_number(tensor[index])
 
           shape ->
             size = Tuple.to_list(shape)
             start = [index | List.duplicate(0, length(size))]
             lengths = [1 | size]
 
-            Nx.slice(tensor, start, lengths)
+            tensor
+            |> Nx.slice(start, lengths)
             |> Nx.reshape(shape)
-            |> Nx.to_flat_list()
+            |> Host.to_list()
             |> List.to_tuple()
         end
     end
@@ -544,7 +547,11 @@ defmodule Lunity.ComponentStore do
     new_tensor =
       case opts.shape do
         {} ->
-          Nx.indexed_put(tensor, Nx.tensor([index]), Nx.tensor(value, type: opts.dtype))
+          Nx.indexed_put(
+            tensor,
+            Host.from_host([index], type: :s32),
+            Host.from_host(value, type: opts.dtype)
+          )
 
         shape ->
           vals =
@@ -555,10 +562,11 @@ defmodule Lunity.ComponentStore do
             end
 
           update =
-            Nx.tensor(vals, type: opts.dtype)
+            vals
+            |> Host.from_host(type: opts.dtype)
             |> Nx.reshape(List.to_tuple([1 | Tuple.to_list(shape)]))
 
-          indices = Nx.tensor([[index]])
+          indices = Host.from_host([[index]], type: :s32)
           Nx.indexed_put(tensor, indices, update)
       end
 
@@ -578,16 +586,20 @@ defmodule Lunity.ComponentStore do
         new_tensor =
           case opts.shape do
             {} ->
-              Nx.indexed_put(tensor, Nx.tensor([index]), Nx.tensor(0, type: opts.dtype))
+              Nx.indexed_put(
+                tensor,
+                Host.from_host([index], type: :s32),
+                Host.from_host(0, type: opts.dtype)
+              )
 
             shape ->
               zeros =
                 Nx.broadcast(
-                  Nx.tensor(0, type: opts.dtype),
+                  Host.from_host(0, type: opts.dtype),
                   List.to_tuple([1 | Tuple.to_list(shape)])
                 )
 
-              Nx.indexed_put(tensor, Nx.tensor([[index]]), zeros)
+              Nx.indexed_put(tensor, Host.from_host([[index]], type: :s32), zeros)
           end
 
         put_tensor(component_module, new_tensor, store_id)
@@ -598,7 +610,7 @@ defmodule Lunity.ComponentStore do
 
   defp get_presence(component_module, index, store_id) do
     case :ets.lookup(tensor_table(store_id), {component_module, :presence}) do
-      [{_, mask}] -> Nx.to_number(mask[index]) == 1
+      [{_, mask}] -> Host.to_number(mask[index]) == 1
       [] -> false
     end
   end
@@ -607,7 +619,14 @@ defmodule Lunity.ComponentStore do
     case :ets.lookup(tensor_table(store_id), {component_module, :presence}) do
       [{_, mask}] ->
         val = if present, do: 1, else: 0
-        new_mask = Nx.indexed_put(mask, Nx.tensor([index]), Nx.tensor(val, type: :u8))
+
+        new_mask =
+          Nx.indexed_put(
+            mask,
+            Host.from_host([index], type: :s32),
+            Host.from_host(val, type: :u8)
+          )
+
         :ets.insert(tensor_table(store_id), {{component_module, :presence}, new_mask})
         Lunity.ComponentStore.Gather.invalidate_cache(store_id)
 

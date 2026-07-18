@@ -13,6 +13,9 @@ defmodule Lunity.Physics.Systems.SweptAABBCollision do
   Declares `filter: BoxCollider` so the TickRunner automatically gathers
   only entities with a box collider into compact tensors before calling
   `run/1`, and scatters the results back afterward.
+
+  The entrypoint is `defn` so the full detect → resolve graph can stay on the
+  configured Nx accelerator backend.
   """
   use Lunity.System, type: :tensor, filter: Lunity.Physics.Components.BoxCollider
 
@@ -37,7 +40,7 @@ defmodule Lunity.Physics.Systems.SweptAABBCollision do
           static: Static.t(),
           delta_time: DeltaTime.t()
         }) :: %{position: Position.t(), velocity: Velocity.t()}
-  def run(inputs) do
+  defn run(inputs) do
     m = Nx.axis_size(inputs.position, 0)
     dt = Nx.reshape(inputs.delta_time, {:auto, 1})
     scaled_vel = Nx.multiply(inputs.velocity, dt)
@@ -56,7 +59,7 @@ defmodule Lunity.Physics.Systems.SweptAABBCollision do
     contacts = Lunity.Physics.Collision.SweptAABB.detect(compact_inputs)
     result = Lunity.Physics.Collision.SweptAABB.resolve_reflect(compact_inputs, contacts)
 
-    safe_dt = Nx.max(dt, Nx.tensor(1.0e-6, type: :f32))
+    safe_dt = Nx.max(dt, 1.0e-6)
     vel_per_s = Nx.divide(result.velocity, safe_dt)
 
     %{position: result.position, velocity: vel_per_s}

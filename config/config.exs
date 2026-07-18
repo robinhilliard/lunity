@@ -2,6 +2,10 @@ import Config
 
 config :logger, level: :warning
 
+# Nx accelerator selection. `:auto` picks Emily/EMLX (Apple Silicon), EXLA
+# CUDA/ROCm/TPU, EXLA host, then BinaryBackend. Override with LUNITY_NX_BACKEND.
+config :lunity, :nx, backend: :auto
+
 # Game client WebSocket (`Lunity.Web.PlayerSocket`). Set in deploy secrets; tests use `put_env`.
 config :lunity, :player_ws_token, nil
 

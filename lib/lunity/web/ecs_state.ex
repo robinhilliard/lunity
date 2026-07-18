@@ -9,7 +9,7 @@ defmodule Lunity.Web.EcsState do
   @spec encode_for_wire(term()) :: term()
   def encode_for_wire(term), do: normalize(term)
 
-  defp normalize(%Nx.Tensor{} = t), do: Nx.to_flat_list(t)
+  defp normalize(%Nx.Tensor{} = t), do: Lunity.Nx.Host.to_list(t)
 
   defp normalize(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
 
