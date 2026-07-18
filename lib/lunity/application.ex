@@ -10,6 +10,8 @@ defmodule Lunity.Application do
 
   @impl true
   def start(_type, _args) do
+    _ = Lunity.Nx.Backend.configure!()
+
     if Application.get_env(:lunity, :mode) == :editor do
       start_editor()
     else

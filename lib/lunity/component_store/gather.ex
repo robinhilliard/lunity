@@ -7,35 +7,36 @@ defmodule Lunity.ComponentStore.Gather do
   tensors down to only the active entities, run the system on smaller
   tensors, and scatter the results back into the full-capacity originals.
 
-  This is the formal version of the manual gather/scatter pattern used
-  in `SweptAABBCollision`. Use it for systems with superlinear cost
-  (e.g. N-squared collision) where reducing N saves orders of magnitude.
-  For simple linear systems, processing the full tensor with `Nx.select`
-  masking is typically faster.
-
-  Active indices are cached per-store and invalidated only when entity
-  lifecycle events occur (allocate, deallocate, presence changes), so
-  the per-tick cost of determining active entities is O(1) in the common
-  case.
+  Active indices are cached per-store as **device tensors** (plus an integer
+  count) and invalidated only when entity lifecycle events occur. The hot
+  path therefore avoids per-tick `Nx.to_flat_list/1` host syncs.
   """
 
   alias Lunity.ComponentStore
+  alias Lunity.Nx.Host
 
   @doc """
-  Returns the list of active tensor indices for one or more components.
+  Returns cached active-index metadata for one or more components.
 
-  Accepts a single component module or a list. When given a list, the
-  presence masks are ANDed together -- only entities present in ALL
-  listed components are included.
+  ## Return value
 
-  Results are cached in the store's tensor ETS table and invalidated
-  by `ComponentStore` on entity lifecycle events.
+      %{count: non_neg_integer(), indices: Nx.Tensor.t(), put_indices: Nx.Tensor.t()}
+
+  * `indices` — `{count}` `:s32` row indices (for `Nx.take`)
+  * `put_indices` — `{count, 1}` `:s32` indices (for `Nx.indexed_put`)
+
+  Accepts a single component module or a list. When given a list, presence
+  masks are ANDed — only entities present in ALL listed components are included.
   """
-  @spec active_indices(module() | [module()], term()) :: [non_neg_integer()]
-  def active_indices(component_or_list, store_id \\ nil) do
+  @spec active_index_set(module() | [module()], term()) :: %{
+          count: non_neg_integer(),
+          indices: Nx.Tensor.t() | nil,
+          put_indices: Nx.Tensor.t() | nil
+        }
+  def active_index_set(component_or_list, store_id \\ nil) do
     sid = store_id || ComponentStore.current_store!()
     components = List.wrap(component_or_list) |> Enum.sort()
-    cache_key = {components, :cached_indices}
+    cache_key = {components, :cached_active}
     tensor_table = :"lunity_tensors_#{sid}"
 
     case :ets.lookup(tensor_table, cache_key) do
@@ -43,28 +44,44 @@ defmodule Lunity.ComponentStore.Gather do
         cached
 
       [] ->
-        indices = compute_active_indices(components, sid)
-        :ets.insert(tensor_table, {cache_key, indices})
-        indices
+        cached = compute_active_index_set(components, sid)
+        :ets.insert(tensor_table, {cache_key, cached})
+        cached
+    end
+  end
+
+  @doc """
+  Returns the list of active tensor indices (host sync).
+
+  Prefer `active_index_set/2` on the tick hot path. This helper exists for
+  tools, tests, and debug inspection.
+  """
+  @spec active_indices(module() | [module()], term()) :: [non_neg_integer()]
+  def active_indices(component_or_list, store_id \\ nil) do
+    case active_index_set(component_or_list, store_id) do
+      %{count: 0} ->
+        []
+
+      %{indices: indices} when not is_nil(indices) ->
+        indices |> Host.to_list() |> Enum.map(&trunc/1)
     end
   end
 
   @doc """
   Compacts input tensors to only the rows at the given indices.
 
-  Takes an inputs map (e.g. `%{position: {128,3}, velocity: {128,3}}`)
-  and a list of integer indices. Returns a new map where each tensor
-  value has been gathered via `Nx.take`. Non-tensor values (like
-  `:ball_idx` scalar inputs from the `entities:` option) are passed
-  through unchanged.
+  `indices` may be:
+
+  * a `%{indices: tensor}` / full index-set map from `active_index_set/2`
+  * an `{N}` index tensor
+  * an Elixir list of integers (host path / tests)
   """
-  @spec gather(map(), [non_neg_integer()]) :: map()
+  @spec gather(map(), [non_neg_integer()] | Nx.Tensor.t() | map()) :: map()
   def gather(inputs, indices) do
-    idx_tensor = Nx.tensor(indices)
+    idx_tensor = normalize_take_indices(indices)
 
     Map.new(inputs, fn {key, value} ->
-      if is_struct(value, Nx.Tensor) and tuple_size(Nx.shape(value)) >= 1 and
-           elem(Nx.shape(value), 0) > 1 do
+      if gatherable_tensor?(value) do
         {key, Nx.take(value, idx_tensor)}
       else
         {key, value}
@@ -75,15 +92,12 @@ defmodule Lunity.ComponentStore.Gather do
   @doc """
   Scatters compact output tensors back into full-capacity originals.
 
-  For each key in `compact_outputs`, reads the corresponding full tensor
-  from `full_inputs` and writes the compact rows back at the given indices
-  using a single batched `Nx.indexed_put`.
-
-  Returns a map of full-capacity tensors ready for `ComponentStore.put_tensor`.
+  `indices` accepts the same forms as `gather/2`. When given an index-set
+  map, uses the precomputed `{count, 1}` `put_indices` tensor.
   """
-  @spec scatter(map(), map(), [non_neg_integer()]) :: map()
+  @spec scatter(map(), map(), [non_neg_integer()] | Nx.Tensor.t() | map()) :: map()
   def scatter(full_inputs, compact_outputs, indices) do
-    idx_tensor = Nx.tensor(Enum.map(indices, &[&1]))
+    idx_tensor = normalize_put_indices(indices)
 
     Map.new(compact_outputs, fn {key, compact_tensor} ->
       full_tensor = Map.fetch!(full_inputs, key)
@@ -104,6 +118,7 @@ defmodule Lunity.ComponentStore.Gather do
 
     try do
       :ets.match_delete(tensor_table, {{:_, :cached_indices}, :_})
+      :ets.match_delete(tensor_table, {{:_, :cached_active}, :_})
     rescue
       ArgumentError -> :ok
     end
@@ -111,30 +126,86 @@ defmodule Lunity.ComponentStore.Gather do
     :ok
   end
 
-  defp compute_active_indices(components, store_id) do
+  # -- Private ------------------------------------------------------------------
+
+  defp compute_active_index_set(components, store_id) do
     masks =
-      Enum.map(components, fn comp ->
-        ComponentStore.get_presence_mask(comp, store_id)
-      end)
+      components
+      |> Enum.map(&ComponentStore.get_presence_mask(&1, store_id))
       |> Enum.reject(&is_nil/1)
 
     case masks do
       [] ->
-        []
+        empty_index_set()
 
       [single] ->
-        mask_to_indices(single)
+        mask_to_index_set(single)
 
       [first | rest] ->
         combined = Enum.reduce(rest, first, &Nx.logical_and(&2, &1))
-        mask_to_indices(combined)
+        mask_to_index_set(combined)
     end
   end
 
-  defp mask_to_indices(mask) do
-    mask
-    |> Nx.to_flat_list()
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {v, i} -> if v == 1, do: [i], else: [] end)
+  defp mask_to_index_set(mask) do
+    # Lifecycle / cache-miss path: one host sync to materialize indices, then
+    # store them back on the default backend for subsequent device-side ticks.
+    list =
+      mask
+      |> Host.to_list()
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {v, i} -> if v == 1, do: [i], else: [] end)
+
+    build_index_set(list)
+  end
+
+  defp build_index_set([]) do
+    empty_index_set()
+  end
+
+  defp build_index_set(list) when is_list(list) do
+    indices = Host.from_host(list, type: :s32)
+    put_indices = Host.from_host(Enum.map(list, &[&1]), type: :s32)
+
+    %{
+      count: length(list),
+      indices: indices,
+      put_indices: put_indices
+    }
+  end
+
+  defp empty_index_set do
+    # Nx cannot represent empty index tensors portably; callers must check `count`.
+    %{count: 0, indices: nil, put_indices: nil}
+  end
+
+  defp normalize_take_indices(%{count: 0}), do: raise_empty_indices!()
+  defp normalize_take_indices(%{indices: %Nx.Tensor{} = indices}), do: indices
+  defp normalize_take_indices(%Nx.Tensor{} = indices), do: indices
+  defp normalize_take_indices(list) when is_list(list), do: Host.from_host(list, type: :s32)
+
+  defp normalize_put_indices(%{count: 0}), do: raise_empty_indices!()
+  defp normalize_put_indices(%{put_indices: %Nx.Tensor{} = indices}), do: indices
+
+  defp normalize_put_indices(%Nx.Tensor{} = indices) do
+    case Nx.shape(indices) do
+      {_, 1} -> indices
+      {_n} -> Nx.reshape(indices, {:auto, 1})
+      _ -> indices
+    end
+  end
+
+  defp normalize_put_indices(list) when is_list(list) do
+    Host.from_host(Enum.map(list, &[&1]), type: :s32)
+  end
+
+  defp raise_empty_indices! do
+    raise ArgumentError,
+      message: "cannot gather/scatter with an empty active index set (count == 0)"
+  end
+
+  defp gatherable_tensor?(value) do
+    is_struct(value, Nx.Tensor) and tuple_size(Nx.shape(value)) >= 1 and
+      elem(Nx.shape(value), 0) > 1
   end
 end

@@ -5,9 +5,12 @@ defmodule Lunity.Physics.Systems.AABBCollision do
   Reads positions, velocities, box colliders, and collision configuration.
   Writes corrected positions and velocities after resolving overlaps.
 
+  Declares `filter: BoxCollider` so only collider-bearing entities are gathered
+  into the `defn` kernel (presence is implicit / all-ones in the compact view).
+
   Games include this in their Manager's system list -- no wrapper needed.
   """
-  use Lunity.System, type: :tensor
+  use Lunity.System, type: :tensor, filter: Lunity.Physics.Components.BoxCollider
 
   alias Lunity.Components.Position
 
@@ -29,8 +32,18 @@ defmodule Lunity.Physics.Systems.AABBCollision do
           restitution: Restitution.t(),
           static: Static.t()
         }) :: %{position: Position.t(), velocity: Velocity.t()}
-  def run(inputs) do
-    presence = Lunity.ComponentStore.get_presence_mask(Lunity.Physics.Components.BoxCollider)
-    Lunity.Physics.Collision.AABB.check_and_respond(Map.put(inputs, :presence, presence))
+  defn run(inputs) do
+    m = Nx.axis_size(inputs.position, 0)
+
+    Lunity.Physics.Collision.AABB.check_and_respond(%{
+      position: inputs.position,
+      velocity: inputs.velocity,
+      box_collider: inputs.box_collider,
+      collision_layer: inputs.collision_layer,
+      collision_mask: inputs.collision_mask,
+      restitution: inputs.restitution,
+      static: inputs.static,
+      presence: Nx.broadcast(Nx.tensor(1, type: :u8), {m})
+    })
   end
 end
